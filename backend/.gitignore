@@ -1,0 +1,16 @@
+# Dependency Directories
+node_modules/
+dist/
+
+# Environment Variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg

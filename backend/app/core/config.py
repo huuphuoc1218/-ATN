@@ -2,19 +2,21 @@ import json
 from typing import Any, List, Optional
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
+from sqlalchemy.engine import URL
+from typing_extensions import Annotated
 
 class Settings(BaseSettings):
     # Database Settings
-    DB_HOST: str = "aws-1-ap-southeast-1.pooler.supabase.com"
+    DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
-    DB_DATABASE: str = "postgres"
-    DB_USER: str = "postgres.pllocixdeiaxknuipixo"
-    DB_PASSWORD: str = "mizugakitsukasa1412"
-    PGSSLMODE: str = "require"
+    DB_DATABASE: str = "pickleball_db"
+    DB_USER: str = "postgres"
+    DB_PASSWORD: str = ""
+    PGSSLMODE: str = "prefer"
 
     # JWT Settings
-    SECRET_KEY: str = "OceXRNLlufuBtERHT-pXEgsa_v5KFCA7Ny12PPDCOTI"
+    SECRET_KEY: str = "change-this-secret-in-env"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
@@ -22,10 +24,12 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: Optional[str] = None
     
     # Application Settings
-    DEBUG: bool = True
+    DEBUG: bool = False
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: Annotated[
+        List[str], NoDecode
+    ] = ["http://localhost:5173", "http://localhost:3000"]
 
     # Public URL used in QR links
     BACKEND_PUBLIC_BASE_URL: str = "http://localhost:8000"
@@ -80,4 +84,13 @@ settings = Settings()
 
 # Tạo DATABASE_URL từ các thông tin
 def get_database_url() -> str:
-    return f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_DATABASE}"
+    return str(
+        URL.create(
+            drivername="postgresql+psycopg2",
+            username=settings.DB_USER,
+            password=settings.DB_PASSWORD,
+            host=settings.DB_HOST,
+            port=int(settings.DB_PORT),
+            database=settings.DB_DATABASE,
+        )
+    )

@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.models.court import Court as CourtModel
+from app.models.notification import CourtRequest as CourtRequestModel
 from app.schemas.notification import (
     Notification,
     NotificationCreate,
@@ -20,6 +23,27 @@ from app.core.cloudinary_storage import upload_image_to_cloudinary
 import json
 
 router = APIRouter()
+
+
+def _social_name_conflicts(db: Session, name: str, exclude_court_id: int = None, exclude_request_id: int = None) -> bool:
+    normalized_name = name.strip().lower()
+    court_query = db.query(CourtModel.id).filter(
+        CourtModel.court_type == "social",
+        func.lower(func.trim(CourtModel.name)) == normalized_name,
+    )
+    if exclude_court_id is not None:
+        court_query = court_query.filter(CourtModel.id != exclude_court_id)
+    if court_query.first() is not None:
+        return True
+
+    request_query = db.query(CourtRequestModel.id).filter(
+        CourtRequestModel.court_type == "social",
+        CourtRequestModel.status == "pending",
+        func.lower(func.trim(CourtRequestModel.name)) == normalized_name,
+    )
+    if exclude_request_id is not None:
+        request_query = request_query.filter(CourtRequestModel.id != exclude_request_id)
+    return request_query.first() is not None
 
 
 def _json_load(value, fallback):
@@ -444,6 +468,14 @@ async def create_court_request(
         )
 
     is_update_request = not request.is_new_court
+    owner_courts = court_crud.get_courts_by_owner(db, current_user.id)
+    exclude_court_id = owner_courts[0].id if is_update_request and owner_courts else None
+
+    if request.court_type == "social" and _social_name_conflicts(db, request.name, exclude_court_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A social court or pending social request with this name already exists",
+        )
 
     # Create court request
     db_request = notification_crud.create_court_request(db, request, current_user.id)
@@ -541,6 +573,14 @@ async def update_court_request_status(
         time_slots = [TimeSlot(**slot) for slot in time_slots_data]
 
         owner_courts = court_crud.get_courts_by_owner(db, request.owner_id)
+
+        if request.court_type == "social":
+            exclude_court_id = owner_courts[0].id if owner_courts and not request.is_new_court else None
+            if _social_name_conflicts(db, request.name, exclude_court_id, request.id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A social court with this name already exists",
+                )
 
         if not request.is_new_court:
             owner_courts = court_crud.get_courts_by_owner(db, request.owner_id)

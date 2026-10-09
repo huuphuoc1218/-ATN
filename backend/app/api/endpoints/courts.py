@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime
@@ -11,6 +12,7 @@ import json
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.models.court import Court as CourtModel
 from app.schemas.court import (
     Court,
     CourtCreate,
@@ -28,6 +30,14 @@ from app.schemas.court import (
 from app.crud import court as court_crud
 
 router = APIRouter()
+
+
+def _social_court_name_exists(db: Session, name: str) -> bool:
+    normalized_name = name.strip().lower()
+    return db.query(CourtModel.id).filter(
+        CourtModel.court_type == "social",
+        func.lower(func.trim(CourtModel.name)) == normalized_name,
+    ).first() is not None
 
 try:
     LOCAL_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -52,6 +62,12 @@ async def create_court(
     # Parse court data from JSON string
     court_dict = json.loads(court_data)
     court = CourtCreate(**court_dict)
+
+    if court.court_type == "social" and _social_court_name_exists(db, court.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A social court with this name already exists",
+        )
     
     # TODO: Handle image uploads to storage (S3, local, etc.)
     image_urls = []

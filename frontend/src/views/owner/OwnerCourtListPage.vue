@@ -14,6 +14,7 @@ interface Court {
   court_quantity: number
   opening_time: string
   closing_time: string
+  court_type?: 'standard' | 'social'
   individual_courts?: IndividualCourt[]
 }
 
@@ -109,6 +110,7 @@ const venueInfo = ref({
   closing_time: '22:00',
 })
 const myVenues = ref<Court[]>([])
+const selectedVenueId = ref<number | null>(null)
 
 // Booking form state
 const bookingForms = ref<Record<number, BookingForm>>({})
@@ -237,9 +239,14 @@ const fetchMyCourts = async () => {
     const response = await axiosInstance.get<Court[]>('/courts/my')
     myVenues.value = response.data
 
-    // If user has venues, show the first one
+    // Keep the selected venue visible after refresh; prefer a newly added social venue.
     if (myVenues.value.length > 0) {
-      const firstVenue = myVenues.value[0]
+      const selectedVenue =
+        myVenues.value.find((venue) => venue.id === selectedVenueId.value) ||
+        myVenues.value.find((venue) => venue.court_type === 'social') ||
+        myVenues.value[0]
+      selectedVenueId.value = selectedVenue.id
+      const firstVenue = selectedVenue
       venueInfo.value = {
         name: firstVenue.name,
         totalCourts: firstVenue.court_quantity,
@@ -578,6 +585,10 @@ const refreshCourts = async () => {
   await fetchMyCourts()
   toast.success('List refreshed')
 }
+
+const selectVenue = async () => {
+  await fetchMyCourts()
+}
 </script>
 
 <template>
@@ -656,6 +667,15 @@ const refreshCourts = async () => {
         </svg>
         Refresh
       </button>
+    </div>
+
+    <div v-if="myVenues.length > 1" class="venue-selector">
+      <label for="venue-select">Venue</label>
+      <select id="venue-select" v-model="selectedVenueId" @change="selectVenue">
+        <option v-for="venue in myVenues" :key="venue.id" :value="venue.id">
+          {{ venue.name }}{{ venue.court_type === 'social' ? ' · Social' : '' }}
+        </option>
+      </select>
     </div>
 
     <!-- Stats Cards -->
@@ -1198,6 +1218,32 @@ const refreshCourts = async () => {
   color: #6b7280;
   font-size: 0.95rem;
   margin: 0;
+}
+
+.venue-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.venue-selector label {
+  color: #374151;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.venue-selector select {
+  min-width: 240px;
+  padding: 9px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: white;
+  color: #1f2937;
+  font-size: 0.95rem;
 }
 
 .refresh-btn {

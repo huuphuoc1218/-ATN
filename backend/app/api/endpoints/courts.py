@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime
 try:
@@ -225,7 +226,13 @@ async def delete_court(
             detail="Not authorized to delete this court",
         )
     
-    court_crud.delete_court(db, court_id)
+    try:
+        court_crud.delete_court(db, court_id)
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete this court because related data still exists",
+        ) from exc
 
 
 # Individual Court endpoints

@@ -79,6 +79,12 @@ const courtForm = ref({
   ward: '',
   city: '',
   description: '',
+  court_type: 'standard' as 'standard' | 'social',
+  social_max_players: 4,
+  social_ticket_price: 100000,
+  social_start_time: '13:00',
+  social_end_time: '17:00',
+  social_date: '',
   court_quantity: 1,
   opening_time: '06:00',
   closing_time: '22:00',
@@ -147,6 +153,8 @@ let nextSlotId = 1
 
 const currentCourtId = ref<number | null>(null)
 const isEditMode = ref(false)
+const requestMode = ref<'update' | 'new'>('new')
+const hasExistingCourt = ref(false)
 
 // Fetch approved court if exists
 const fetchApprovedCourt = async () => {
@@ -154,8 +162,10 @@ const fetchApprovedCourt = async () => {
     const response = await axiosInstance.get('/courts/my')
     if (response.data && response.data.length > 0) {
       const court = response.data[0]
+      hasExistingCourt.value = true
       currentCourtId.value = court.id
       isEditMode.value = true
+      requestMode.value = 'update'
 
       // Load court data into form
       courtForm.value = {
@@ -164,6 +174,12 @@ const fetchApprovedCourt = async () => {
         ward: court.ward,
         city: court.city,
         description: court.description || '',
+        court_type: court.court_type || 'standard',
+        social_max_players: court.social_max_players || 4,
+        social_ticket_price: court.social_ticket_price || 100000,
+        social_start_time: court.social_start_time || '13:00',
+        social_end_time: court.social_end_time || '17:00',
+        social_date: court.social_date || '',
         court_quantity: court.court_quantity,
         opening_time: court.opening_time,
         closing_time: court.closing_time,
@@ -316,6 +332,12 @@ const resetForm = () => {
     ward: '',
     city: '',
     description: '',
+    court_type: 'standard' as 'standard' | 'social',
+    social_max_players: 4,
+    social_ticket_price: 100000,
+    social_start_time: '13:00',
+    social_end_time: '17:00',
+    social_date: '',
     court_quantity: 1,
     opening_time: '06:00',
     closing_time: '22:00',
@@ -327,6 +349,18 @@ const resetForm = () => {
   images.value = []
   imagePreviews.value = []
   nextSlotId = 1
+}
+
+const startNewCourt = () => {
+  requestMode.value = 'new'
+  isEditMode.value = false
+  currentCourtId.value = null
+  resetForm()
+}
+
+const editExistingCourt = () => {
+  requestMode.value = 'update'
+  fetchApprovedCourt()
 }
 
 const validateForm = () => {
@@ -347,6 +381,28 @@ const validateForm = () => {
     return false
   }
 
+  if (courtForm.value.court_type === 'social') {
+    if (!courtForm.value.social_date) {
+      toast.error('Please choose a social play date')
+      return false
+    }
+    if (!courtForm.value.social_ticket_price || courtForm.value.social_ticket_price <= 0) {
+      toast.error('Please enter a valid social ticket price')
+      return false
+    }
+    if (
+      !isValidTimeValue(courtForm.value.social_start_time) ||
+      !isValidTimeValue(courtForm.value.social_end_time)
+    ) {
+      toast.error('Social time must use HH:MM format')
+      return false
+    }
+    if (courtForm.value.social_start_time >= courtForm.value.social_end_time) {
+      toast.error('Social end time must be later than start time')
+      return false
+    }
+  }
+
   if (!courtForm.value.address.trim()) {
     toast.error('Please enter address')
     return false
@@ -362,83 +418,85 @@ const validateForm = () => {
     return false
   }
 
-  // Validate time slots
-  if (timeSlots.value.length === 0) {
-    toast.error('Please add at least one time slot')
-    return false
-  }
-
-  for (const slot of timeSlots.value) {
-    if (!slot.startTime || !slot.endTime) {
-      toast.error('Please enter start and end time for all slots')
+  if (courtForm.value.court_type !== 'social') {
+    // Validate time slots
+    if (timeSlots.value.length === 0) {
+      toast.error('Please add at least one time slot')
       return false
     }
-    if (!isValidTimeValue(slot.startTime) || !isValidTimeValue(slot.endTime)) {
-      toast.error('Time format must be HH:MM (e.g. 06:00, 18:30)')
+
+    for (const slot of timeSlots.value) {
+      if (!slot.startTime || !slot.endTime) {
+        toast.error('Please enter start and end time for all slots')
+        return false
+      }
+      if (!isValidTimeValue(slot.startTime) || !isValidTimeValue(slot.endTime)) {
+        toast.error('Time format must be HH:MM (e.g. 06:00, 18:30)')
+        return false
+      }
+      if (slot.startTime >= slot.endTime) {
+        toast.error(`End time (${slot.endTime}) must be later than start time (${slot.startTime})`)
+        return false
+      }
+      if (!slot.price || parseFloat(slot.price) <= 0) {
+        toast.error('Please enter valid price for all slots')
+        return false
+      }
+    }
+
+    // Validate time slots coverage
+    if (!courtForm.value.opening_time || !courtForm.value.closing_time) {
+      toast.error('Please enter opening and closing time')
       return false
     }
-    if (slot.startTime >= slot.endTime) {
-      toast.error(`End time (${slot.endTime}) must be later than start time (${slot.startTime})`)
+
+    if (
+      !isValidTimeValue(courtForm.value.opening_time) ||
+      !isValidTimeValue(courtForm.value.closing_time)
+    ) {
+      toast.error('Opening and closing time must be HH:MM (e.g. 06:00, 22:00)')
       return false
     }
-    if (!slot.price || parseFloat(slot.price) <= 0) {
-      toast.error('Please enter valid price for all slots')
-      return false
-    }
-  }
 
-  // Validate time slots coverage
-  if (!courtForm.value.opening_time || !courtForm.value.closing_time) {
-    toast.error('Please enter opening and closing time')
-    return false
-  }
-
-  if (
-    !isValidTimeValue(courtForm.value.opening_time) ||
-    !isValidTimeValue(courtForm.value.closing_time)
-  ) {
-    toast.error('Opening and closing time must be HH:MM (e.g. 06:00, 22:00)')
-    return false
-  }
-
-  if (courtForm.value.opening_time >= courtForm.value.closing_time) {
-    toast.error(
-      `Closing time (${courtForm.value.closing_time}) must be later than opening time (${courtForm.value.opening_time})`,
-    )
-    return false
-  }
-
-  // Check if time slots cover the entire opening hours
-  const openingTime = courtForm.value.opening_time
-  const closingTime = courtForm.value.closing_time
-  const sortedSlots = [...timeSlots.value].sort((a, b) => a.startTime.localeCompare(b.startTime))
-
-  // Check if first slot starts at opening time
-  if (sortedSlots[0].startTime !== openingTime) {
-    toast.error(
-      `The first slot must start at opening time (${openingTime}). Current start: ${sortedSlots[0].startTime}`,
-    )
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-    return false
-  }
-
-  // Check if last slot ends at closing time
-  if (sortedSlots[sortedSlots.length - 1].endTime !== closingTime) {
-    toast.error(
-      `The last slot must end at closing time (${closingTime}). Current end: ${sortedSlots[sortedSlots.length - 1].endTime}`,
-    )
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-    return false
-  }
-
-  // Check for gaps between time slots
-  for (let i = 0; i < sortedSlots.length - 1; i++) {
-    if (sortedSlots[i].endTime !== sortedSlots[i + 1].startTime) {
+    if (courtForm.value.opening_time >= courtForm.value.closing_time) {
       toast.error(
-        `There is a gap between slots (${sortedSlots[i].endTime} - ${sortedSlots[i + 1].startTime}). Please cover all time slots from ${openingTime} to ${closingTime}`,
+        `Closing time (${courtForm.value.closing_time}) must be later than opening time (${courtForm.value.opening_time})`,
+      )
+      return false
+    }
+
+    // Check if time slots cover the entire opening hours
+    const openingTime = courtForm.value.opening_time
+    const closingTime = courtForm.value.closing_time
+    const sortedSlots = [...timeSlots.value].sort((a, b) => a.startTime.localeCompare(b.startTime))
+
+    // Check if first slot starts at opening time
+    if (sortedSlots[0].startTime !== openingTime) {
+      toast.error(
+        `The first slot must start at opening time (${openingTime}). Current start: ${sortedSlots[0].startTime}`,
       )
       window.scrollTo({ top: 0, behavior: 'smooth' })
       return false
+    }
+
+    // Check if last slot ends at closing time
+    if (sortedSlots[sortedSlots.length - 1].endTime !== closingTime) {
+      toast.error(
+        `The last slot must end at closing time (${closingTime}). Current end: ${sortedSlots[sortedSlots.length - 1].endTime}`,
+      )
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return false
+    }
+
+    // Check for gaps between time slots
+    for (let i = 0; i < sortedSlots.length - 1; i++) {
+      if (sortedSlots[i].endTime !== sortedSlots[i + 1].startTime) {
+        toast.error(
+          `There is a gap between slots (${sortedSlots[i].endTime} - ${sortedSlots[i + 1].startTime}). Please cover all time slots from ${openingTime} to ${closingTime}`,
+        )
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return false
+      }
     }
   }
 
@@ -553,6 +611,16 @@ const handleSubmit = async () => {
       ward: courtForm.value.ward,
       city: courtForm.value.city,
       description: courtForm.value.description,
+      court_type: courtForm.value.court_type,
+      social_max_players:
+        courtForm.value.court_type === 'social' ? courtForm.value.social_max_players : null,
+      social_start_time:
+        courtForm.value.court_type === 'social' ? courtForm.value.social_start_time : null,
+      social_end_time:
+        courtForm.value.court_type === 'social' ? courtForm.value.social_end_time : null,
+      social_date: courtForm.value.court_type === 'social' ? courtForm.value.social_date : null,
+      social_ticket_price:
+        courtForm.value.court_type === 'social' ? courtForm.value.social_ticket_price : null,
       court_quantity: courtForm.value.court_quantity,
       opening_time: courtForm.value.opening_time,
       closing_time: courtForm.value.closing_time,
@@ -560,13 +628,16 @@ const handleSubmit = async () => {
       contact_phone: courtForm.value.contact_phone,
       contact_email: courtForm.value.contact_email,
       time_slots: JSON.stringify(
-        timeSlots.value.map((slot) => ({
-          start_time: slot.startTime,
-          end_time: slot.endTime,
-          price: parseFloat(slot.price),
-        })),
+        courtForm.value.court_type === 'social'
+          ? []
+          : timeSlots.value.map((slot) => ({
+              start_time: slot.startTime,
+              end_time: slot.endTime,
+              price: parseFloat(slot.price),
+            })),
       ),
       images: allImages.length > 0 ? JSON.stringify(allImages) : null,
+      is_new_court: requestMode.value === 'new',
     }
 
     await axiosInstance.post('/court-requests', courtRequestData)
@@ -669,13 +740,25 @@ const formatTimeWithPeriod = (time: string) => {
     <div class="request-workflow-card">
       <div class="workflow-title-row">
         <span class="workflow-badge">Approval Workflow</span>
-        <strong>{{ isEditMode ? 'Update Mode' : 'Create Mode' }}</strong>
+        <strong>{{ requestMode === 'update' ? 'Update Mode' : 'Create Mode' }}</strong>
+      </div>
+      <div v-if="hasExistingCourt" class="request-mode-actions">
+        <button
+          type="button"
+          :class="{ active: requestMode === 'update' }"
+          @click="editExistingCourt"
+        >
+          Edit existing court
+        </button>
+        <button type="button" :class="{ active: requestMode === 'new' }" @click="startNewCourt">
+          Add new court
+        </button>
       </div>
       <p class="workflow-text">
         {{
-          isEditMode
+          requestMode === 'update'
             ? 'Changes are submitted as an update request and will only be applied after admin approval.'
-            : 'Your court data is submitted as a request and will appear after admin approval.'
+            : 'This new court is submitted separately and will appear after admin approval.'
         }}
       </p>
       <div class="workflow-steps">
@@ -767,6 +850,53 @@ const formatTimeWithPeriod = (time: string) => {
             />
           </div>
 
+          <div class="form-group">
+            <label class="form-label required">Court Mode</label>
+            <select v-model="courtForm.court_type" class="form-input">
+              <option value="standard">Standard booking</option>
+              <option value="social">Social: open to new players</option>
+            </select>
+          </div>
+
+          <div v-if="courtForm.court_type === 'social'" class="form-group">
+            <label class="form-label required">Social player capacity</label>
+            <input
+              v-model.number="courtForm.social_max_players"
+              type="number"
+              class="form-input"
+              min="2"
+              max="100"
+              step="1"
+            />
+          </div>
+
+          <div v-if="courtForm.court_type === 'social'" class="form-group">
+            <label class="form-label required">Social ticket price</label>
+            <input
+              v-model.number="courtForm.social_ticket_price"
+              type="number"
+              class="form-input"
+              min="1000"
+              step="1000"
+              placeholder="VD: 100000"
+            />
+          </div>
+
+          <div v-if="courtForm.court_type === 'social'" class="form-group">
+            <label class="form-label required">Social play date</label>
+            <input v-model="courtForm.social_date" type="date" class="form-input" />
+          </div>
+
+          <div v-if="courtForm.court_type === 'social'" class="form-group">
+            <label class="form-label required">Social start time</label>
+            <input v-model="courtForm.social_start_time" type="time" class="form-input" />
+          </div>
+
+          <div v-if="courtForm.court_type === 'social'" class="form-group">
+            <label class="form-label required">Social end time</label>
+            <input v-model="courtForm.social_end_time" type="time" class="form-input" />
+          </div>
+
           <div class="form-group full-width">
             <label class="form-label">Description</label>
             <textarea
@@ -780,7 +910,7 @@ const formatTimeWithPeriod = (time: string) => {
       </div>
 
       <!-- Pricing & Hours -->
-      <div class="form-section">
+      <div v-if="courtForm.court_type !== 'social'" class="form-section">
         <div class="section-header">
           <h2 class="section-title">
             <svg
@@ -1437,6 +1567,29 @@ const formatTimeWithPeriod = (time: string) => {
   border: 1px solid #bfdbfe;
   border-radius: 14px;
   padding: 16px 18px;
+}
+
+.request-mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.request-mode-actions button {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 9px 13px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.request-mode-actions button.active {
+  border-color: #2d5016;
+  background: #2d5016;
+  color: #fff;
 }
 
 .workflow-title-row {

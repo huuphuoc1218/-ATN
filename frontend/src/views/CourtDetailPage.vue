@@ -36,6 +36,12 @@ interface Court {
   city: string
   description: string
   court_quantity: number
+  court_type?: 'standard' | 'social'
+  social_max_players?: number | null
+  social_start_time?: string | null
+  social_end_time?: string | null
+  social_date?: string | null
+  social_ticket_price?: number | null
   opening_time: string
   closing_time: string
   images: string[]
@@ -50,10 +56,46 @@ interface Court {
   updated_at?: string
 }
 
+interface SocialParticipant {
+  user_id: number
+  full_name: string
+  tickets: number
+}
+
+interface SocialSession {
+  booking_id: number
+  booking_date: string
+  start_time: string
+  end_time: string
+  count: number
+  max_players: number
+  status?: 'active' | 'full' | 'expired'
+  participants: SocialParticipant[]
+}
+
 const court = ref<Court | null>(null)
 const isLoading = ref(false)
 const currentImageIndex = ref(0)
 const activeTab = ref('overview')
+const socialSessions = ref<SocialSession[]>([])
+const socialToday = computed(() => socialSessions.value[0] || null)
+const socialDateLabel = computed(() => {
+  if (!court.value?.social_date) return 'Date to be announced'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${court.value.social_date}T00:00:00`))
+})
+const socialExpired = computed(() => {
+  if (!court.value?.social_date || !court.value.social_end_time) return false
+
+  const now = new Date()
+  const sessionDate = new Date(`${court.value.social_date}T00:00:00`)
+  const [hours, minutes] = court.value.social_end_time.split(':').map(Number)
+  sessionDate.setHours(hours, minutes, 0, 0)
+  return now >= sessionDate
+})
 
 // Check if user is owner or enterprise for header props
 const showManagement = computed(() => authStore.user?.role === 'owner')
@@ -66,6 +108,16 @@ const fetchCourtDetails = async () => {
     const courtId = route.params.id
     const response = await axiosInstance.get(`/courts/${courtId}`)
     court.value = response.data
+    if (court.value?.court_type === 'social' && authStore.token) {
+      const date = court.value.social_date
+        ? new Date(`${court.value.social_date}T00:00:00`)
+        : new Date()
+      const bookingDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      const sessions = await axiosInstance.get<SocialSession[]>('/bookings/social', {
+        params: { court_id: court.value.id, booking_date: bookingDate },
+      })
+      socialSessions.value = sessions.data
+    }
   } catch (error) {
     console.error('Error fetching court details:', error)
   } finally {
@@ -112,6 +164,9 @@ const goToImage = (index: number) => {
 
 // Navigate to booking
 const bookNow = () => {
+  if (court.value?.court_type === 'social' && socialExpired.value) {
+    return
+  }
   if (!authStore.user || !authStore.token) {
     router.push('/login')
     return
@@ -209,242 +264,270 @@ onMounted(() => {
       <div class="spinner"></div>
       <p>Loading court details...</p>
     </div>
-
     <!-- Court Details -->
     <div v-else-if="court" class="detail-container">
-      <!-- Image Carousel -->
-      <section class="carousel-section">
-        <div class="carousel-container">
-          <button class="carousel-btn prev" @click="previousImage">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </button>
+      <div v-if="court.court_type === 'social'" class="social-detail">
+        <section class="social-hero">
+          <div class="social-hero-copy">
+            <span class="social-kicker">SOCIAL PLAY</span>
+            <h1>{{ court.name }}</h1>
+            <p>Buy your ticket, meet new players, and step onto the court together.</p>
+            <div class="social-hero-meta">
+              <span>{{ socialDateLabel }}</span>
+              <span>{{ court.social_max_players || 2 }} tickets per session</span>
+              <span>{{ court.social_start_time }} - {{ court.social_end_time }}</span>
+              <span>{{ formatPrice(court.social_ticket_price || 0) }} VND / ticket</span>
+            </div>
+          </div>
+          <img :src="courtImages[0]" :alt="court.name" class="social-hero-image" />
+        </section>
 
-          <div class="carousel-images">
-            <img
-              v-for="(img, index) in courtImages"
-              :key="index"
-              :src="img"
-              :alt="`${court.name} - Image ${index + 1}`"
-              :class="{ active: index === currentImageIndex }"
-              class="carousel-image"
-            />
+        <section class="social-content">
+          <div class="social-intro">
+            <div>
+              <span class="social-kicker">OPEN TO EVERYONE</span>
+              <h2>Play with people you have not met yet.</h2>
+              <p>Buy one ticket or bring your whole crew. Every ticket reserves one player spot.</p>
+            </div>
+            <button class="social-primary-btn" :disabled="socialExpired" @click="bookNow">
+              {{ socialExpired ? 'SOCIAL EXPIRED' : 'JOIN IN - BUY TICKETS' }}
+            </button>
           </div>
 
-          <button class="carousel-btn next" @click="nextImage">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
-          </button>
-
-          <!-- Carousel Indicators -->
-          <div class="carousel-indicators">
-            <button
-              v-for="(_img, index) in courtImages"
-              :key="index"
-              :class="{ active: index === currentImageIndex }"
-              class="indicator"
-              @click="goToImage(index)"
-            ></button>
+          <div class="social-location-row">
+            <span>{{ court.address }}, Ward {{ court.ward }}, {{ court.city }}</span>
+            <span>{{ court.contact_phone }}</span>
           </div>
-        </div>
-      </section>
 
-      <!-- Main Content -->
-      <section class="main-content">
-        <div class="content-wrapper">
-          <!-- Left Column - Court Information -->
-          <div class="info-column">
-            <!-- Court Header -->
-            <div class="court-header">
-              <h1 class="court-title">{{ court.name }}</h1>
-              <div class="court-badges">
-                <span class="badge booking-badge">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" />
-                    <path
-                      fill-rule="evenodd"
-                      d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  {{ bookingCount }}+ Bookings
+          <div class="social-sessions-panel">
+            <div class="social-section-heading">
+              <div>
+                <span class="social-kicker">SOCIAL PLAY</span>
+                <h2>People already joining</h2>
+              </div>
+              <span class="social-date-label">COME & PLAY</span>
+            </div>
+
+            <div class="social-fixed-detail-time">
+              <strong>{{ court.social_start_time }} - {{ court.social_end_time }}</strong>
+            </div>
+
+            <div v-if="!socialToday" class="social-empty-state">
+              <strong>Be the first player in.</strong>
+              <span>Purchase one or more tickets to join today's social play.</span>
+            </div>
+            <div v-else class="social-today-summary">
+              <div class="session-progress-label">
+                <strong>{{ socialToday.count }}/{{ socialToday.max_players }} tickets sold</strong>
+                <span>{{ socialToday.max_players - socialToday.count }} spots left</span>
+              </div>
+              <div class="session-progress-track">
+                <span
+                  :style="{
+                    width: `${Math.min(100, (socialToday.count / socialToday.max_players) * 100)}%`,
+                  }"
+                ></span>
+              </div>
+              <div class="session-people">
+                <span
+                  v-for="person in socialToday.participants"
+                  :key="person.user_id"
+                  class="person-chip"
+                >
+                  {{ person.full_name }} · {{ person.tickets }} ticket{{
+                    person.tickets > 1 ? 's' : ''
+                  }}
                 </span>
-                <span class="badge indoor-badge">Indoor</span>
               </div>
             </div>
+          </div>
+        </section>
+      </div>
 
-            <!-- Court Contact Info -->
-            <div class="contact-info">
-              <div class="contact-item">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                  />
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-                <span>{{ court.address }}, Ward {{ court.ward }}, {{ court.city }}</span>
-              </div>
-              <div class="contact-item" v-if="court.contact_email">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                  />
-                </svg>
-                <span>{{ court.contact_email }}</span>
-              </div>
-              <div class="contact-item">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-                  />
-                </svg>
-                <span>{{ court.contact_phone }}</span>
-              </div>
+      <div v-else>
+        <!-- Image Carousel -->
+        <section class="carousel-section">
+          <div class="carousel-container">
+            <button class="carousel-btn prev" @click="previousImage">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+
+            <div class="carousel-images">
+              <img
+                v-for="(img, index) in courtImages"
+                :key="index"
+                :src="img"
+                :alt="`${court.name} - Image ${index + 1}`"
+                :class="{ active: index === currentImageIndex }"
+                class="carousel-image"
+              />
             </div>
 
-            <!-- Tabs -->
-            <div class="tabs">
-              <button
-                :class="{ active: activeTab === 'overview' }"
-                class="tab-btn"
-                @click="activeTab = 'overview'"
+            <button class="carousel-btn next" @click="nextImage">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
               >
-                Overview
-              </button>
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+
+            <!-- Carousel Indicators -->
+            <div class="carousel-indicators">
               <button
-                :class="{ active: activeTab === 'pricing' }"
-                class="tab-btn"
-                @click="activeTab = 'pricing'"
-              >
-                Pricing
-              </button>
-              <button
-                :class="{ active: activeTab === 'facilities' }"
-                class="tab-btn"
-                @click="activeTab = 'facilities'"
-              >
-                Facilities
-              </button>
-              <button
-                :class="{ active: activeTab === 'reviews' }"
-                class="tab-btn"
-                @click="activeTab = 'reviews'"
-              >
-                Reviews
-              </button>
+                v-for="(_img, index) in courtImages"
+                :key="index"
+                :class="{ active: index === currentImageIndex }"
+                class="indicator"
+                @click="goToImage(index)"
+              ></button>
             </div>
+          </div>
+        </section>
 
-            <!-- Tab Content -->
-            <div class="tab-content">
-              <!-- Overview Tab -->
-              <div v-if="activeTab === 'overview'" class="overview-content">
-                <h3>Overview</h3>
-                <p v-if="court.description" class="description">{{ court.description }}</p>
-                <p v-else class="no-description">No description available for this court.</p>
-
-                <div class="court-features">
-                  <div class="feature-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
+        <!-- Main Content -->
+        <section class="main-content">
+          <div class="content-wrapper">
+            <!-- Left Column - Court Information -->
+            <div class="info-column">
+              <!-- Court Header -->
+              <div class="court-header">
+                <h1 class="court-title">{{ court.name }}</h1>
+                <div class="court-badges">
+                  <span class="badge booking-badge">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" />
                       <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                        fill-rule="evenodd"
+                        d="M1.323 11.447C2.811 6.976 7.028 3.75 12.001 3.75c4.97 0 9.185 3.223 10.675 7.69.12.362.12.752 0 1.113-1.487 4.471-5.705 7.697-10.677 7.697-4.97 0-9.186-3.223-10.675-7.69a1.762 1.762 0 010-1.113zM17.25 12a5.25 5.25 0 11-10.5 0 5.25 5.25 0 0110.5 0z"
+                        clip-rule="evenodd"
                       />
                     </svg>
-                    <div>
-                      <strong>Opening Hours</strong>
-                      <p>{{ court.opening_time }} - {{ court.closing_time }}</p>
-                    </div>
-                  </div>
-                  <div class="feature-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-                      />
-                    </svg>
-                    <div>
-                      <strong>Available Courts</strong>
-                      <p>{{ court.court_quantity }} courts available</p>
-                    </div>
-                  </div>
+                    {{ bookingCount }}+ Bookings
+                  </span>
+                  <span class="badge indoor-badge">Indoor</span>
                 </div>
               </div>
 
-              <!-- Pricing Tab -->
-              <div v-if="activeTab === 'pricing'" class="pricing-content">
-                <h3>Pricing Details</h3>
-                <p class="pricing-description">
-                  Our flexible pricing structure to suit your schedule
-                </p>
+              <!-- Court Contact Info -->
+              <div class="contact-info">
+                <div class="contact-item">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                    />
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                  <span>{{ court.address }}, Ward {{ court.ward }}, {{ court.city }}</span>
+                </div>
+                <div class="contact-item" v-if="court.contact_email">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    />
+                  </svg>
+                  <span>{{ court.contact_email }}</span>
+                </div>
+                <div class="contact-item">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                    />
+                  </svg>
+                  <span>{{ court.contact_phone }}</span>
+                </div>
+              </div>
 
-                <div v-if="court.time_slots && court.time_slots.length > 0" class="pricing-grid">
-                  <div v-for="(slot, index) in court.time_slots" :key="index" class="pricing-card">
-                    <div class="pricing-time">
+              <!-- Tabs -->
+              <div class="tabs">
+                <button
+                  :class="{ active: activeTab === 'overview' }"
+                  class="tab-btn"
+                  @click="activeTab = 'overview'"
+                >
+                  Overview
+                </button>
+                <button
+                  :class="{ active: activeTab === 'pricing' }"
+                  class="tab-btn"
+                  @click="activeTab = 'pricing'"
+                >
+                  Pricing
+                </button>
+                <button
+                  :class="{ active: activeTab === 'facilities' }"
+                  class="tab-btn"
+                  @click="activeTab = 'facilities'"
+                >
+                  Facilities
+                </button>
+                <button
+                  :class="{ active: activeTab === 'reviews' }"
+                  class="tab-btn"
+                  @click="activeTab = 'reviews'"
+                >
+                  Reviews
+                </button>
+              </div>
+
+              <!-- Tab Content -->
+              <div class="tab-content">
+                <!-- Overview Tab -->
+                <div v-if="activeTab === 'overview'" class="overview-content">
+                  <h3>Overview</h3>
+                  <p v-if="court.description" class="description">{{ court.description }}</p>
+                  <p v-else class="no-description">No description available for this court.</p>
+
+                  <div class="court-features">
+                    <div class="feature-item">
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
                         fill="none"
@@ -458,200 +541,280 @@ onMounted(() => {
                           d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                         />
                       </svg>
-                      <span>{{ slot.start_time }} - {{ slot.end_time }}</span>
+                      <div>
+                        <strong>Opening Hours</strong>
+                        <p>{{ court.opening_time }} - {{ court.closing_time }}</p>
+                      </div>
                     </div>
-                    <div class="pricing-amount">
-                      <span class="price-value">{{ formatPrice(slot.price) }}</span>
-                      <span class="price-unit">VND/hour</span>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="no-pricing">
-                  <p>Pricing information will be updated soon. Please contact us for details.</p>
-                </div>
-              </div>
-
-              <!-- Facilities Tab -->
-              <div v-if="activeTab === 'facilities'" class="facilities-content">
-                <h3>Facilities</h3>
-                <div class="facilities-grid">
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>Free Parking</span>
-                  </div>
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>Free Drinks</span>
-                  </div>
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>Locker Rooms</span>
-                  </div>
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>Shower Facilities</span>
-                  </div>
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>Equipment Rental</span>
-                  </div>
-                  <div class="facility-item">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>WiFi Available</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Reviews Tab -->
-              <div v-if="activeTab === 'reviews'" class="reviews-content">
-                <h3>Reviews</h3>
-                <div class="reviews-summary">
-                  <div class="rating-box">
-                    <div class="rating-score">5.0</div>
-                    <div class="stars">
+                    <div class="feature-item">
                       <svg
-                        v-for="i in 5"
-                        :key="i"
                         xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
                         viewBox="0 0 24 24"
-                        fill="currentColor"
+                        stroke="currentColor"
                       >
                         <path
-                          d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
                         />
                       </svg>
+                      <div>
+                        <strong>Available Courts</strong>
+                        <p>{{ court.court_quantity }} courts available</p>
+                      </div>
                     </div>
                   </div>
+                </div>
 
-                  <div class="rating-details">
-                    <div class="rating-item">
-                      <span class="rating-label">Service</span>
-                      <div class="rating-bar">
-                        <div class="rating-fill" style="width: 100%"></div>
+                <!-- Pricing Tab -->
+                <div v-if="activeTab === 'pricing'" class="pricing-content">
+                  <h3>Pricing Details</h3>
+                  <p class="pricing-description">
+                    Our flexible pricing structure to suit your schedule
+                  </p>
+
+                  <div v-if="court.time_slots && court.time_slots.length > 0" class="pricing-grid">
+                    <div
+                      v-for="(slot, index) in court.time_slots"
+                      :key="index"
+                      class="pricing-card"
+                    >
+                      <div class="pricing-time">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        <span>{{ slot.start_time }} - {{ slot.end_time }}</span>
                       </div>
-                      <span class="rating-value">5.0</span>
+                      <div class="pricing-amount">
+                        <span class="price-value">{{ formatPrice(slot.price) }}</span>
+                        <span class="price-unit">VND/hour</span>
+                      </div>
                     </div>
-                    <div class="rating-item">
-                      <span class="rating-label">Parking</span>
-                      <div class="rating-bar">
-                        <div class="rating-fill" style="width: 100%"></div>
-                      </div>
-                      <span class="rating-value">5.0</span>
+                  </div>
+                  <div v-else class="no-pricing">
+                    <p>Pricing information will be updated soon. Please contact us for details.</p>
+                  </div>
+                </div>
+
+                <!-- Facilities Tab -->
+                <div v-if="activeTab === 'facilities'" class="facilities-content">
+                  <h3>Facilities</h3>
+                  <div class="facilities-grid">
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>Free Parking</span>
                     </div>
-                    <div class="rating-item">
-                      <span class="rating-label">Facility</span>
-                      <div class="rating-bar">
-                        <div class="rating-fill" style="width: 100%"></div>
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>Free Drinks</span>
+                    </div>
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>Locker Rooms</span>
+                    </div>
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>Shower Facilities</span>
+                    </div>
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>Equipment Rental</span>
+                    </div>
+                    <div class="facility-item">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      <span>WiFi Available</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Reviews Tab -->
+                <div v-if="activeTab === 'reviews'" class="reviews-content">
+                  <h3>Reviews</h3>
+                  <div class="reviews-summary">
+                    <div class="rating-box">
+                      <div class="rating-score">5.0</div>
+                      <div class="stars">
+                        <svg
+                          v-for="i in 5"
+                          :key="i"
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                        >
+                          <path
+                            d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.007 5.404.433c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.433 2.082-5.006z"
+                          />
+                        </svg>
                       </div>
-                      <span class="rating-value">5.0</span>
+                    </div>
+
+                    <div class="rating-details">
+                      <div class="rating-item">
+                        <span class="rating-label">Service</span>
+                        <div class="rating-bar">
+                          <div class="rating-fill" style="width: 100%"></div>
+                        </div>
+                        <span class="rating-value">5.0</span>
+                      </div>
+                      <div class="rating-item">
+                        <span class="rating-label">Parking</span>
+                        <div class="rating-bar">
+                          <div class="rating-fill" style="width: 100%"></div>
+                        </div>
+                        <span class="rating-value">5.0</span>
+                      </div>
+                      <div class="rating-item">
+                        <span class="rating-label">Facility</span>
+                        <div class="rating-bar">
+                          <div class="rating-fill" style="width: 100%"></div>
+                        </div>
+                        <span class="rating-value">5.0</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Right Column - Booking Card -->
-          <div class="booking-column">
-            <div class="booking-card">
-              <div class="availability">
-                <div class="availability-badge" :class="{ closed: !availabilityStatus.available }">
-                  <div class="pulse-dot" v-if="availabilityStatus.available"></div>
-                  <div class="closed-dot" v-else></div>
-                  <span>{{ availabilityStatus.text }}</span>
+            <!-- Right Column - Booking Card -->
+            <div class="booking-column">
+              <div class="booking-card">
+                <div class="availability">
+                  <div
+                    class="availability-badge"
+                    :class="{ closed: !availabilityStatus.available }"
+                  >
+                    <div class="pulse-dot" v-if="availabilityStatus.available"></div>
+                    <div class="closed-dot" v-else></div>
+                    <span>{{ availabilityStatus.text }}</span>
+                  </div>
                 </div>
-              </div>
 
-              <div class="pricing">
-                <div class="price-main">
-                  <span class="price">{{ formatPrice(displayPrice) }} VND/h</span>
-                  <span class="guests">{{ priceLabel }}</span>
+                <div class="pricing">
+                  <div class="price-main">
+                    <span class="price">{{ formatPrice(displayPrice) }} VND/h</span>
+                    <span class="guests">{{ priceLabel }}</span>
+                  </div>
+                  <div v-if="currentTimeSlot" class="price-range current-slot">
+                    {{ currentTimeSlot.start_time }} - {{ currentTimeSlot.end_time }}
+                  </div>
+                  <div
+                    v-else-if="court.time_slots && court.time_slots.length > 1"
+                    class="price-range"
+                  >
+                    Multiple pricing options available
+                  </div>
                 </div>
-                <div v-if="currentTimeSlot" class="price-range current-slot">
-                  {{ currentTimeSlot.start_time }} - {{ currentTimeSlot.end_time }}
-                </div>
-                <div
-                  v-else-if="court.time_slots && court.time_slots.length > 1"
-                  class="price-range"
-                >
-                  Multiple pricing options available
-                </div>
-              </div>
 
-              <div class="inclusions">
-                <div class="inclusion-badge">
+                <div class="inclusions">
+                  <div class="inclusion-badge">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M12 4v16m8-8H4"
+                      />
+                    </svg>
+                    <span>FREE</span>
+                  </div>
+                  <div class="inclusion-items">
+                    <span>drinks, parking</span>
+                  </div>
+                </div>
+
+                <button class="book-now-btn" @click="bookNow">BOOK NOW</button>
+
+                <div class="booking-note">
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
@@ -662,38 +825,16 @@ onMounted(() => {
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="2"
-                      d="M12 4v16m8-8H4"
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  <span>FREE</span>
+                  <span>Instant confirmation upon booking</span>
                 </div>
-                <div class="inclusion-items">
-                  <span>drinks, parking</span>
-                </div>
-              </div>
-
-              <button class="book-now-btn" @click="bookNow">BOOK NOW</button>
-
-              <div class="booking-note">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                <span>Instant confirmation upon booking</span>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </div>
 
     <!-- Error State -->
@@ -719,6 +860,227 @@ onMounted(() => {
 .court-detail-page {
   min-height: 100vh;
   background: #f8f9fa;
+}
+
+.social-detail {
+  min-height: 70vh;
+  background: #102a2a;
+  color: #f4f8ef;
+}
+
+.social-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+  min-height: 390px;
+  background: #d9ef68;
+  color: #102a2a;
+}
+
+.social-hero-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(36px, 7vw, 90px);
+}
+
+.social-kicker {
+  color: #e5ff4f;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.social-hero .social-kicker {
+  color: #23615a;
+}
+
+.social-hero h1 {
+  max-width: 700px;
+  margin: 12px 0;
+  font-size: clamp(2.5rem, 6vw, 5.5rem);
+  line-height: 0.95;
+}
+
+.social-hero p {
+  max-width: 560px;
+  margin: 12px 0 28px;
+  font-size: 1.08rem;
+}
+
+.social-hero-meta,
+.social-location-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.social-hero-image {
+  width: 100%;
+  height: 100%;
+  min-height: 390px;
+  object-fit: cover;
+}
+
+.social-content {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 58px 28px 90px;
+}
+
+.social-intro,
+.social-section-heading,
+.social-session-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.social-intro h2,
+.social-section-heading h2 {
+  margin: 8px 0;
+  color: #f4f8ef;
+  font-size: clamp(1.6rem, 3vw, 2.7rem);
+}
+
+.social-intro p {
+  max-width: 650px;
+  margin: 0;
+  color: #b5c8bd;
+  line-height: 1.6;
+}
+
+.social-primary-btn,
+.session-join-btn {
+  border: 0;
+  border-radius: 999px;
+  background: #e5ff4f;
+  color: #102a2a;
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.social-primary-btn:disabled {
+  background: #d1d5db;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+.social-primary-btn {
+  min-height: 60px;
+  padding: 16px 30px;
+  font-size: 1.12rem;
+  letter-spacing: 0.02em;
+}
+
+.social-location-row {
+  margin: 34px 0 48px;
+  padding: 18px 0;
+  border-top: 1px solid #33504a;
+  border-bottom: 1px solid #33504a;
+  color: #c4d5ca;
+}
+
+.social-sessions-panel {
+  padding: 28px;
+  border: 1px solid #33504a;
+  border-radius: 14px;
+  background: #173635;
+}
+
+.social-date-label {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #2a514d;
+  color: #e5ff4f;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.social-empty-state {
+  display: grid;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 28px;
+  border: 1px dashed #52726a;
+  color: #b5c8bd;
+}
+
+.social-session-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.social-session-card {
+  align-items: flex-start;
+  padding: 20px;
+  border-radius: 10px;
+  background: #214540;
+}
+
+.session-time {
+  display: grid;
+  min-width: 104px;
+  gap: 5px;
+}
+
+.session-time strong {
+  color: #e5ff4f;
+  font-size: 1.3rem;
+}
+
+.session-time span,
+.session-progress-label span {
+  color: #b5c8bd;
+  font-size: 0.82rem;
+}
+
+.session-progress {
+  flex: 1;
+}
+
+.session-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.session-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #102a2a;
+}
+
+.session-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #e5ff4f;
+}
+
+.session-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.person-chip {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #2d5952;
+  color: #e9f3eb;
+  font-size: 0.76rem;
+}
+
+.session-join-btn {
+  padding: 11px 16px;
 }
 
 /* Loading State */

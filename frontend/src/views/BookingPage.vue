@@ -65,6 +65,12 @@ interface Court {
   contact_email?: string
   owner_id: number
   owner?: CourtOwner
+  court_type?: 'standard' | 'social'
+  social_max_players?: number | null
+  social_start_time?: string | null
+  social_end_time?: string | null
+  social_date?: string | null
+  social_ticket_price?: number | null
 }
 
 const court = ref<Court | null>(null)
@@ -77,6 +83,7 @@ const availableDates = ref<Date[]>([])
 
 // Time selection
 const selectedTimeSlots = ref<string[]>([])
+const ticketQuantity = ref(1)
 
 // Step 2: User Information
 const userInfo = ref({
@@ -224,16 +231,27 @@ const generateTimeSlots = () => {
   if (!court.value) return []
 
   const slots: string[] = []
-  const [startHour] = court.value.opening_time.split(':').map(Number)
-  const [endHour] = court.value.closing_time.split(':').map(Number)
+  const startValue =
+    court.value.court_type === 'social' && court.value.social_start_time
+      ? court.value.social_start_time
+      : court.value.opening_time
+  const endValue =
+    court.value.court_type === 'social' && court.value.social_end_time
+      ? court.value.social_end_time
+      : court.value.closing_time
+  const [startHour, startMinute] = startValue.split(':').map(Number)
+  const [endHour, endMinute] = endValue.split(':').map(Number)
 
-  // Generate 30-minute intervals
-  for (let hour = startHour; hour < endHour; hour++) {
-    slots.push(`${String(hour).padStart(2, '0')}:00`)
-    slots.push(`${String(hour).padStart(2, '0')}:30`)
+  for (
+    let minutes = startHour * 60 + startMinute;
+    minutes < endHour * 60 + endMinute;
+    minutes += 30
+  ) {
+    slots.push(
+      `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`,
+    )
   }
-  // Add final hour slot
-  slots.push(`${String(endHour).padStart(2, '0')}:00`)
+  slots.push(`${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`)
 
   return slots
 }
@@ -415,11 +433,17 @@ const bookingDetails = computed(() => {
     subtotal: price * hours,
   }))
 
+  const basePrice =
+    court.value?.court_type === 'social' && court.value.social_ticket_price
+      ? court.value.social_ticket_price
+      : totalPrice
+
   return {
     startTime,
     endTime,
     totalHours,
-    totalPrice,
+    totalPrice:
+      court.value?.court_type === 'social' ? basePrice * ticketQuantity.value : totalPrice,
     priceBreakdown,
   }
 })
@@ -440,10 +464,17 @@ const fetchCourtDetails = async () => {
 
     // Fetch individual courts for this court
     if (court.value) {
+      if (court.value.court_type === 'social' && court.value.social_date) {
+        const [year, month, day] = court.value.social_date.split('-').map(Number)
+        selectedDate.value = new Date(year, month - 1, day)
+      }
       const individualCourtsResponse = await axiosInstance.get(
         `/courts/${courtId}/individual-courts`,
       )
       court.value.individual_courts = individualCourtsResponse.data
+      if (court.value.court_type === 'social') {
+        selectedTimeSlots.value = timeSlots.value
+      }
     }
   } catch (error) {
     console.error('Error fetching court details:', error)
@@ -535,6 +566,7 @@ const preparePaymentPreview = async () => {
       booking_date: formatBookingDatePayload(selectedDate.value),
       start_time: bookingDetails.value.startTime,
       end_time: bookingDetails.value.endTime,
+      ticket_quantity: court.value.court_type === 'social' ? ticketQuantity.value : 1,
     })
 
     paymentInfo.value = response.data
@@ -576,6 +608,7 @@ const createBooking = async () => {
       customer_name: userInfo.value.name,
       customer_email: userInfo.value.email,
       payment_method: 'vietqr',
+      ticket_quantity: court.value?.court_type === 'social' ? ticketQuantity.value : 1,
     }
 
     const response = await axiosInstance.post('/bookings', bookingData)
@@ -681,30 +714,25 @@ onMounted(() => {
       </div>
 
       <!-- Main Booking Section -->
-      <div class="main-section" v-if="currentStep === 1">
+      <div
+        class="main-section"
+        :class="{ 'social-booking-main': court?.court_type === 'social' }"
+        v-if="currentStep === 1"
+      >
         <div class="booking-container">
           <!-- Left: Date & Time Selection -->
           <div class="selection-panel">
             <!-- Instructions -->
             <div class="instructions-box">
               <h2 class="section-title">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                >
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" stroke-width="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" stroke-width="2" />
-                  <line x1="8" y1="2" x2="8" y2="6" stroke-width="2" />
-                  <line x1="3" y1="10" x2="21" y2="10" stroke-width="2" />
-                </svg>
-                Select Date & Time
+                {{
+                  court?.court_type === 'social' ? 'Social ticket details' : 'Select Date & Time'
+                }}
               </h2>
             </div>
 
             <!-- Date Picker -->
-            <div class="picker-section">
+            <div v-if="court?.court_type !== 'social'" class="picker-section">
               <h3 class="picker-label">
                 <span class="label-icon">📅</span>
                 Choose Date
@@ -760,8 +788,40 @@ onMounted(() => {
               </div>
             </div>
 
+            <div v-if="court?.court_type === 'social'" class="social-fixed-date">
+              <span class="social-fixed-time-label">SOCIAL PLAY DATE</span>
+              <strong>{{ formatDateFull(selectedDate) }}</strong>
+            </div>
+
+            <div v-if="court?.court_type === 'social'" class="ticket-picker">
+              <div>
+                <span class="ticket-picker-label">Social tickets</span>
+                <small>One ticket reserves one player spot.</small>
+              </div>
+              <div class="ticket-stepper">
+                <button type="button" @click="ticketQuantity = Math.max(1, ticketQuantity - 1)">
+                  -
+                </button>
+                <strong>{{ ticketQuantity }}</strong>
+                <button
+                  type="button"
+                  @click="
+                    ticketQuantity = Math.min(court?.social_max_players || 20, ticketQuantity + 1)
+                  "
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div v-if="court?.court_type === 'social'" class="social-fixed-time">
+              <span class="social-fixed-time-label">FIXED SOCIAL PLAY</span>
+              <strong>{{ court.social_start_time }} - {{ court.social_end_time }}</strong>
+              <small>Choose a date and reserve one or more player tickets.</small>
+            </div>
+
             <!-- Time Slots -->
-            <div class="picker-section">
+            <div v-else class="picker-section">
               <div class="picker-header">
                 <h3 class="picker-label">
                   <span class="label-icon">⏰</span>
@@ -892,14 +952,24 @@ onMounted(() => {
                   <!-- Show simple breakdown if single price tier -->
                   <template v-else>
                     <div class="breakdown-item">
-                      <span>Price per hour</span>
                       <span>{{
-                        formatPrice(bookingDetails.priceBreakdown?.[0]?.price || 100000)
+                        court?.court_type === 'social' ? 'Price per ticket' : 'Price per hour'
+                      }}</span>
+                      <span>{{
+                        formatPrice(
+                          court?.court_type === 'social'
+                            ? court.social_ticket_price || 0
+                            : bookingDetails.priceBreakdown?.[0]?.price || 100000,
+                        )
                       }}</span>
                     </div>
                     <div class="breakdown-item">
-                      <span>Duration</span>
-                      <span>{{ bookingDetails.totalHours }}h</span>
+                      <span>{{ court?.court_type === 'social' ? 'Quantity' : 'Duration' }}</span>
+                      <span>{{
+                        court?.court_type === 'social'
+                          ? ticketQuantity
+                          : `${bookingDetails.totalHours}h`
+                      }}</span>
                     </div>
                   </template>
 
@@ -1561,6 +1631,37 @@ onMounted(() => {
   gap: 40px;
 }
 
+.social-booking-main .booking-container {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  max-width: 1280px;
+  align-items: start;
+}
+
+.social-booking-main .details-panel {
+  width: 100%;
+  position: sticky;
+  top: 100px;
+}
+
+.social-booking-main .selection-panel,
+.social-booking-main .details-card {
+  font-size: 1.05rem;
+}
+
+.social-booking-main .picker-label,
+.social-booking-main .section-title {
+  font-size: 1.35rem;
+}
+
+.social-booking-main .social-fixed-date,
+.social-booking-main .social-fixed-time,
+.social-booking-main .ticket-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
 /* Selection Panel */
 .selection-panel {
   background: white;
@@ -1836,7 +1937,50 @@ onMounted(() => {
   padding: 2rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
+}
+
+.social-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.summary-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.summary-stat-label {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary-stat strong {
+  color: #1e293b;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.summary-stat-total {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.summary-stat-total strong {
+  color: #15803d;
 }
 
 .detail-group {
@@ -2736,6 +2880,14 @@ onMounted(() => {
   .details-panel {
     position: static;
   }
+
+  .social-booking-main .booking-container {
+    grid-template-columns: 1fr;
+  }
+
+  .social-booking-main .details-panel {
+    position: static;
+  }
 }
 
 @media (max-width: 768px) {
@@ -3097,5 +3249,178 @@ onMounted(() => {
     font-size: 0.92rem;
     padding: 12px 14px;
   }
+}
+
+.social-sessions {
+  margin: 18px 0 8px;
+  padding: 16px;
+  border: 1px solid #cde7d8;
+  border-radius: 8px;
+  background: #f4fbf6;
+}
+
+.social-empty {
+  margin: 8px 0 0;
+  color: #52705d;
+  font-size: 0.9rem;
+}
+
+.social-session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #dceee2;
+}
+
+.social-session div {
+  display: grid;
+  gap: 3px;
+}
+
+.social-session span {
+  color: #52705d;
+  font-size: 0.85rem;
+}
+
+.social-session small {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.social-join-btn {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #fff;
+  background: #16834b;
+  cursor: pointer;
+}
+
+.social-join-btn:disabled {
+  background: #9aaea1;
+  cursor: not-allowed;
+}
+
+.social-join-btn.is-expired {
+  background: #64748b;
+}
+
+.social-join-btn.is-full {
+  background: #b45309;
+}
+
+.ticket-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #d5e96a;
+  border-radius: 8px;
+  background: #f7fbdc;
+}
+
+.ticket-picker div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.ticket-picker-label {
+  color: #214540;
+  font-weight: 800;
+}
+
+.ticket-picker small {
+  color: #52705d;
+}
+
+.ticket-stepper {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ticket-stepper button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: #214540;
+  color: #e5ff4f;
+  cursor: pointer;
+  font-size: 1.1rem;
+}
+
+.social-summary-note {
+  margin: 0 20px 12px;
+  color: #2f6a5f;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.social-fixed-date,
+.social-fixed-time {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0;
+  padding: 18px 20px;
+  border-left: 4px solid #d5e96a;
+  border-radius: 8px;
+  background: #173635;
+  color: #f4f8ef;
+}
+
+.social-fixed-date strong,
+.social-fixed-time strong {
+  font-size: 1.35rem;
+  color: #e5ff4f;
+}
+
+.social-fixed-date small,
+.social-fixed-time small {
+  color: #b5c8bd;
+}
+
+.social-fixed-time-label {
+  color: #e5ff4f;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.social-join-payment {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 18px 0;
+  padding: 20px;
+  border: 1px solid #d5e96a;
+  border-radius: 8px;
+  background: #f7fbdc;
+  color: #214540;
+  text-align: center;
+}
+
+.social-join-payment p {
+  margin: 4px 0;
+  color: #52705d;
+  font-size: 0.88rem;
+}
+
+.social-join-payment img {
+  width: 190px;
+  height: 190px;
+  padding: 8px;
+  background: #fff;
+}
+
+.social-join-payment span {
+  color: #52705d;
+  font-family: monospace;
+  font-size: 0.85rem;
 }
 </style>

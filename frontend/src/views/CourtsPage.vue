@@ -22,6 +22,8 @@ interface Court {
   city: string
   description: string
   court_quantity: number
+  court_type?: 'standard' | 'social'
+  social_max_players?: number | null
   opening_time: string
   closing_time: string
   images: string[]
@@ -362,6 +364,10 @@ onMounted(() => {
                 </svg>
                 {{ getBadgeText(court.court_quantity) }} Courts
               </div>
+              <div v-if="court.court_type === 'social'" class="social-badge">
+                Social · up to {{ court.social_max_players || 2 }} players
+              </div>
+              <div v-else class="standard-badge">STANDARD COURT</div>
             </div>
 
             <div class="court-info">
@@ -922,6 +928,28 @@ onMounted(() => {
 .court-badge svg {
   width: 16px;
   height: 16px;
+}
+
+.standard-badge,
+.social-badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.standard-badge {
+  background: rgba(255, 255, 255, 0.92);
+  color: #475569;
+}
+
+.social-badge {
+  background: #e5ff4f;
+  color: #214540;
 }
 
 @keyframes slideInLeft {

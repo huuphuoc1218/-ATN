@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, Field
+from datetime import date, datetime
 from typing import Optional, List
 
 
@@ -32,6 +32,12 @@ class CourtRequestBase(BaseModel):
     ward: str
     city: str
     description: Optional[str] = None
+    court_type: str = Field(default="standard", pattern="^(standard|social)$")
+    social_max_players: Optional[int] = Field(default=None, ge=2, le=100)
+    social_start_time: Optional[str] = None
+    social_end_time: Optional[str] = None
+    social_date: Optional[date] = None
+    social_ticket_price: Optional[float] = Field(default=None, gt=0)
     court_quantity: int
     opening_time: str
     closing_time: str
@@ -40,6 +46,7 @@ class CourtRequestBase(BaseModel):
     contact_email: Optional[str] = None
     images: Optional[str] = None
     time_slots: Optional[str] = None
+    is_new_court: bool = False
 
 
 class CourtRequestCreate(CourtRequestBase):

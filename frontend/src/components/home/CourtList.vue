@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axiosInstance from '@/utils/axios'
 
@@ -33,11 +33,19 @@ interface Court {
   time_slots?: TimeSlot[]
   created_at: string
   updated_at?: string
+  court_type?: 'standard' | 'social'
+  social_max_players?: number | null
+  social_start_time?: string | null
+  social_end_time?: string | null
+  social_date?: string | null
+  social_ticket_price?: number | null
 }
 
 const router = useRouter()
 const courts = ref<Court[]>([])
 const isLoading = ref(false)
+const socialCourts = computed(() => courts.value.filter((court) => court.court_type === 'social'))
+const regularCourts = computed(() => courts.value.filter((court) => court.court_type !== 'social'))
 
 // Fetch courts from API
 const fetchCourts = async () => {
@@ -45,7 +53,7 @@ const fetchCourts = async () => {
   try {
     const response = await axiosInstance.get('/courts', {
       params: {
-        limit: 3,
+        limit: 100,
       },
     })
     courts.value = response.data
@@ -132,6 +140,9 @@ const getCurrentTimeSlot = (court: Court) => {
 
 // Get current price or lowest price based on time
 const getCurrentPrice = (court: Court) => {
+  if (court.court_type === 'social' && court.social_ticket_price) {
+    return court.social_ticket_price
+  }
   if (!court.time_slots || court.time_slots.length === 0) {
     return 150000 // Default price
   }
@@ -149,6 +160,15 @@ const getCurrentPrice = (court: Court) => {
 
 const formatPrice = (price: number) => {
   return new Intl.NumberFormat('vi-VN').format(price)
+}
+
+const formatSocialDate = (value?: string | null) => {
+  if (!value) return 'Date to be announced'
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${value}T00:00:00`))
 }
 
 // Navigate to court details
@@ -189,10 +209,56 @@ onMounted(() => {
         <p>Loading courts...</p>
       </div>
 
-      <!-- Courts Grid -->
-      <div v-else-if="courts.length > 0" class="courts-grid">
+      <div v-if="socialCourts.length > 0" class="social-home-section">
+        <div class="social-home-heading">
+          <div>
+            <span class="section-badge social-section-badge"
+              ><i class="fas fa-users"></i> Social Play</span
+            >
+            <h2>Play with people you haven't met yet.</h2>
+            <p>Fixed-time sessions. Buy one ticket or bring your whole crew.</p>
+          </div>
+        </div>
+        <div class="courts-grid social-home-grid">
+          <div
+            v-for="court in socialCourts.slice(0, 3)"
+            :key="`social-featured-${court.id}`"
+            class="court-card social-home-card"
+            @click="viewCourtDetails(court.id)"
+          >
+            <div class="court-image">
+              <img :src="getCourtImage(court)" :alt="court.name" loading="lazy" decoding="async" />
+              <div class="social-home-label">SOCIAL PLAY</div>
+              <div class="court-badge social-home-badge">
+                {{ formatSocialDate(court.social_date) }}
+              </div>
+            </div>
+            <div class="court-info">
+              <div class="court-header">
+                <h3 class="court-name">{{ court.name }}</h3>
+                <span class="status-badge active">Open to all</span>
+              </div>
+              <p class="court-ward">
+                <i class="fas fa-map-marker-alt"></i> Ward {{ court.ward }}, {{ court.city }}
+              </p>
+              <p class="social-home-time">
+                <i class="fas fa-clock"></i> {{ court.social_start_time }} -
+                {{ court.social_end_time }}
+              </p>
+              <div class="court-footer">
+                <span class="price">{{ formatPrice(getCurrentPrice(court)) }} VND/ticket</span>
+                <button class="book-btn social-home-btn" @click.stop="viewCourtDetails(court.id)">
+                  Join In
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="regularCourts.length > 0" class="courts-grid">
         <div
-          v-for="court in courts"
+          v-for="court in regularCourts.slice(0, 3)"
           :key="court.id"
           class="court-card"
           @click="viewCourtDetails(court.id)"
@@ -231,7 +297,7 @@ onMounted(() => {
       </div>
 
       <!-- No Courts State -->
-      <div v-else class="no-courts">
+      <div v-if="courts.length === 0" class="no-courts">
         <p>No courts available at the moment.</p>
       </div>
     </div>
@@ -242,6 +308,65 @@ onMounted(() => {
 .court-list-section {
   padding: 100px 40px;
   background: white;
+}
+
+.social-home-section {
+  margin: 0 0 56px;
+  padding: 26px;
+  border-radius: 14px;
+  background: #102a2a;
+  color: #f4f8ef;
+}
+
+.social-home-heading h2 {
+  max-width: 560px;
+  margin: 12px 0 8px;
+  color: #e5ff4f;
+  font-size: clamp(1.55rem, 3vw, 2.45rem);
+  line-height: 1;
+}
+
+.social-home-heading p {
+  margin: 0 0 28px;
+  color: #c4d5ca;
+}
+
+.social-section-badge {
+  background: #e5ff4f;
+  color: #214540;
+}
+
+.social-home-grid {
+  margin-top: 20px;
+}
+
+.social-home-card {
+  overflow: hidden;
+  border: 2px solid #d5e96a;
+  box-shadow: 0 8px 22px rgba(16, 42, 42, 0.16);
+}
+
+.social-home-label {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 1;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #e5ff4f;
+  color: #214540;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.social-home-badge {
+  background: #214540;
+  color: #e5ff4f;
+}
+
+.social-home-btn {
+  background: #214540;
+  color: #e5ff4f;
 }
 
 .container {
@@ -352,7 +477,7 @@ onMounted(() => {
 
 .courts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 40px;
 }
 

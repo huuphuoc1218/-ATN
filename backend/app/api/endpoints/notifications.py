@@ -32,15 +32,8 @@ def _json_load(value, fallback):
 
 
 def _attach_court_request_metadata(db: Session, request: CourtRequest):
-    owner_requests = notification_crud.get_owner_court_requests(db, request.owner_id)
-    owner_requests_sorted = sorted(
-        owner_requests,
-        key=lambda item: ((item.created_at or 0), item.id),
-    )
-    first_request_id = owner_requests_sorted[0].id if owner_requests_sorted else request.id
-
-    # Stable classification: first request of owner is create, subsequent requests are update.
-    submission_type = "create" if request.id == first_request_id else "update"
+    # The owner explicitly chooses whether a submission creates a new venue.
+    submission_type = "create" if request.is_new_court else "update"
     setattr(request, "submission_type", submission_type)
 
     if submission_type == "create":
@@ -109,6 +102,12 @@ def _attach_court_request_metadata(db: Session, request: CourtRequest):
     _append_change("Ward", court.ward, request.ward)
     _append_change("City", court.city, request.city)
     _append_change("Description", court.description, request.description)
+    _append_change("Court Type", court.court_type, request.court_type)
+    _append_change("Social Capacity", court.social_max_players, request.social_max_players)
+    _append_change("Social Start Time", court.social_start_time, request.social_start_time)
+    _append_change("Social End Time", court.social_end_time, request.social_end_time)
+    _append_change("Social Date", court.social_date, request.social_date)
+    _append_change("Social Ticket Price", court.social_ticket_price, request.social_ticket_price)
     _append_change("Court Quantity", court.court_quantity, request.court_quantity)
     _append_change("Opening Time", court.opening_time, request.opening_time)
     _append_change("Closing Time", court.closing_time, request.closing_time)
@@ -365,7 +364,7 @@ async def upload_images(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owners can upload images",
         )
-    
+
     image_urls = []
     for image in images:
         if not image.content_type or not image.content_type.startswith("image/"):
@@ -376,7 +375,7 @@ async def upload_images(
             subfolder="courts",
         )
         image_urls.append(image_url)
-    
+
     return {"urls": image_urls}
 
 
@@ -412,11 +411,11 @@ async def mark_notification_read(
     notification = notification_crud.mark_as_read(db, notification_id)
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    
+
     # Verify ownership
     if notification.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     return notification
 
 
@@ -443,18 +442,17 @@ async def create_court_request(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owners can submit court requests",
         )
-    
-    owner_courts = court_crud.get_courts_by_owner(db, current_user.id)
-    is_update_request = len(owner_courts) > 0
+
+    is_update_request = not request.is_new_court
 
     # Create court request
     db_request = notification_crud.create_court_request(db, request, current_user.id)
     _attach_court_request_metadata(db, db_request)
-    
+
     # Create notification for all admins
     from app.crud.user import get_users_by_role
     admins = get_users_by_role(db, "admin")
-    
+
     for admin in admins:
         admin_title = "Court update request" if is_update_request else "New court listing request"
         admin_message = (
@@ -470,7 +468,7 @@ async def create_court_request(
             related_id=db_request.id,
         )
         notification_crud.create_notification(db, notification)
-    
+
     return db_request
 
 
@@ -501,11 +499,11 @@ async def get_court_request(
     request = notification_crud.get_court_request(db, request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Court request not found")
-    
+
     # Check authorization
     if current_user.role != "admin" and request.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     return _attach_court_request_metadata(db, request)
 
 
@@ -519,32 +517,38 @@ async def update_court_request_status(
     """Approve or reject a court request (admin only)"""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admins can review requests")
-    
+
     request = notification_crud.get_court_request(db, request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Court request not found")
-    
+
     if request.status != "pending":
         raise HTTPException(status_code=400, detail="Request already reviewed")
-    
+
     # Update request status
     updated_request = notification_crud.update_court_request_status(
         db, request_id, update, current_user.id
     )
-    
+
     # If approved, create a new court OR update existing owner court
     if update.status == "approved":
         from app.schemas.court import CourtCreate, CourtUpdate, TimeSlot
-        
+
         # Parse JSON fields
         facilities = json.loads(request.facilities) if request.facilities else []
         images = json.loads(request.images) if request.images else []
         time_slots_data = json.loads(request.time_slots) if request.time_slots else []
         time_slots = [TimeSlot(**slot) for slot in time_slots_data]
-        
+
         owner_courts = court_crud.get_courts_by_owner(db, request.owner_id)
 
-        if owner_courts:
+        if not request.is_new_court:
+            owner_courts = court_crud.get_courts_by_owner(db, request.owner_id)
+            if not owner_courts:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot update a court because the owner has no approved court",
+                )
             # Update existing approved court after admin approval.
             target_court = owner_courts[0]
             update_data = CourtUpdate(
@@ -553,6 +557,12 @@ async def update_court_request_status(
                 ward=request.ward,
                 city=request.city,
                 description=request.description,
+                court_type=request.court_type,
+                social_max_players=request.social_max_players,
+                social_start_time=request.social_start_time,
+                social_end_time=request.social_end_time,
+                social_date=request.social_date,
+                social_ticket_price=request.social_ticket_price,
                 court_quantity=request.court_quantity,
                 opening_time=request.opening_time,
                 closing_time=request.closing_time,
@@ -578,6 +588,12 @@ async def update_court_request_status(
                 ward=request.ward,
                 city=request.city,
                 description=request.description,
+                court_type=request.court_type,
+                social_max_players=request.social_max_players,
+                social_start_time=request.social_start_time,
+                social_end_time=request.social_end_time,
+                social_date=request.social_date,
+                social_ticket_price=request.social_ticket_price,
                 court_quantity=request.court_quantity,
                 opening_time=request.opening_time,
                 closing_time=request.closing_time,
@@ -597,7 +613,7 @@ async def update_court_request_status(
                 related_id=court.id,
             )
     else:
-        is_update_request = len(court_crud.get_courts_by_owner(db, request.owner_id)) > 0
+        is_update_request = not request.is_new_court
         reject_title = "Court update request rejected" if is_update_request else "Court listing request rejected"
         reject_message = (
             f"Your court update request for '{request.name}' was rejected. Reason: {update.rejection_reason or 'Unknown'}"
@@ -612,9 +628,9 @@ async def update_court_request_status(
             type="request_rejected",
             related_id=request_id,
         )
-    
+
     notification_crud.create_notification(db, notification)
-    
+
     return _attach_court_request_metadata(db, updated_request)
 
 
@@ -628,13 +644,13 @@ async def delete_court_request(
     request = notification_crud.get_court_request(db, request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Court request not found")
-    
+
     # Check authorization
     if current_user.role != "admin" and request.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     # Owner can only delete pending requests
     if current_user.role == "owner" and request.status != "pending":
         raise HTTPException(status_code=400, detail="Cannot delete reviewed request")
-    
+
     notification_crud.delete_court_request(db, request_id)

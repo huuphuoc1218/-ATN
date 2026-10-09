@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import date, datetime
 
 # Time Slot Schema
 class TimeSlot(BaseModel):
@@ -19,6 +19,12 @@ class CourtBase(BaseModel):
     ward: str
     city: str
     description: Optional[str] = None
+    court_type: str = Field(default="standard", pattern="^(standard|social)$")
+    social_max_players: Optional[int] = Field(default=None, ge=2, le=100)
+    social_start_time: Optional[str] = None
+    social_end_time: Optional[str] = None
+    social_date: Optional[date] = None
+    social_ticket_price: Optional[float] = Field(default=None, gt=0)
     court_quantity: int = Field(ge=1)
     opening_time: str
     closing_time: str
@@ -38,6 +44,12 @@ class CourtUpdate(BaseModel):
     ward: Optional[str] = None
     city: Optional[str] = None
     description: Optional[str] = None
+    court_type: Optional[str] = Field(None, pattern="^(standard|social)$")
+    social_max_players: Optional[int] = Field(None, ge=2, le=100)
+    social_start_time: Optional[str] = None
+    social_end_time: Optional[str] = None
+    social_date: Optional[date] = None
+    social_ticket_price: Optional[float] = Field(default=None, gt=0)
     court_quantity: Optional[int] = Field(None, ge=1)
     opening_time: Optional[str] = None
     closing_time: Optional[str] = None
@@ -56,6 +68,7 @@ class Court(CourtBase):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    social_participant_count: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -154,6 +167,7 @@ class BookingBase(BaseModel):
 class BookingCreate(BookingBase):
     individual_court_id: int
     payment_method: str = "vietqr"  # vietqr or cash
+    ticket_quantity: int = Field(default=1, ge=1, le=20)
 
 
 class BookingUpdate(BaseModel):
@@ -205,6 +219,7 @@ class PaymentPreviewRequest(BaseModel):
     booking_date: datetime
     start_time: str
     end_time: str
+    ticket_quantity: int = Field(default=1, ge=1, le=20)
 
 
 # Booking with payment info

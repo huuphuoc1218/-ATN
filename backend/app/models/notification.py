@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -34,6 +34,12 @@ class CourtRequest(Base):
     ward = Column(String, nullable=False)
     city = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    court_type = Column(String(20), nullable=False, default="standard", server_default="standard")
+    social_max_players = Column(Integer, nullable=True)
+    social_start_time = Column(String(5), nullable=True)
+    social_end_time = Column(String(5), nullable=True)
+    social_date = Column(Date, nullable=True)
+    social_ticket_price = Column(Integer, nullable=True)
     court_quantity = Column(Integer, nullable=False, default=1)
     opening_time = Column(String, nullable=False)
     closing_time = Column(String, nullable=False)
@@ -42,6 +48,7 @@ class CourtRequest(Base):
     contact_email = Column(String, nullable=True)
     images = Column(String, nullable=True)  # JSON string - list of image URLs
     time_slots = Column(String, nullable=True)  # JSON string
+    is_new_court = Column(Boolean, nullable=False, default=False, server_default="false")
     
     status = Column(String, default="pending")  # pending, approved, rejected
     rejection_reason = Column(Text, nullable=True)

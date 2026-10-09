@@ -6,7 +6,7 @@ try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
     from backports.zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from app.models.court import Court, IndividualCourt, Booking
+from app.models.court import Court, IndividualCourt, Booking, BookingParticipant
 from app.schemas.court import CourtCreate, CourtUpdate, IndividualCourtUpdate, BookingCreate, BookingUpdate
 
 
@@ -96,6 +96,12 @@ def create_court(db: Session, court: CourtCreate, owner_id: int, images: Optiona
         ward=court.ward,
         city=court.city,
         description=court.description,
+        court_type=court.court_type,
+        social_max_players=court.social_max_players if court.court_type == "social" else None,
+        social_start_time=court.social_start_time if court.court_type == "social" else None,
+        social_end_time=court.social_end_time if court.court_type == "social" else None,
+        social_date=court.social_date if court.court_type == "social" else None,
+        social_ticket_price=court.social_ticket_price if court.court_type == "social" else None,
         court_quantity=court.court_quantity,
         opening_time=court.opening_time,
         closing_time=court.closing_time,
@@ -135,6 +141,13 @@ def update_court(db: Session, court_id: int, court_update: CourtUpdate) -> Optio
     if "time_slots" in update_data and update_data["time_slots"]:
         # time_slots are already in dict format, no need to convert
         pass
+
+    if update_data.get("court_type") == "standard":
+        update_data["social_max_players"] = None
+        update_data["social_start_time"] = None
+        update_data["social_end_time"] = None
+        update_data["social_date"] = None
+        update_data["social_ticket_price"] = None
     
     for field, value in update_data.items():
         setattr(db_court, field, value)
@@ -172,9 +185,13 @@ def delete_court(db: Session, court_id: int) -> bool:
     db_court = get_court(db, court_id)
     if not db_court:
         return False
-    
-    db.delete(db_court)
-    db.commit()
+
+    try:
+        db.delete(db_court)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return True
 
 
@@ -310,13 +327,17 @@ def create_booking(db: Session, booking: BookingCreate, user_id: int) -> Booking
     if not parent_court:
         raise ValueError("Không tìm thấy thông tin sân")
 
-    # Always allocate from the first available individual court to the last.
-    available_courts = find_available_courts(
-        db,
-        parent_court.id,
-        booking.booking_date,
-        booking.start_time,
-        booking.end_time,
+    # Social sessions share one court record; standard bookings need a free court.
+    available_courts = (
+        [requested_court]
+        if parent_court.court_type == "social"
+        else find_available_courts(
+            db,
+            parent_court.id,
+            booking.booking_date,
+            booking.start_time,
+            booking.end_time,
+        )
     )
 
     if not available_courts:
@@ -330,6 +351,10 @@ def create_booking(db: Session, booking: BookingCreate, user_id: int) -> Booking
         booking.end_time,
         parent_court.time_slots or []
     )
+    if parent_court.court_type == "social" and parent_court.social_ticket_price:
+        total_price = float(parent_court.social_ticket_price)
+    if parent_court.court_type == "social":
+        total_price *= booking.ticket_quantity
     
     # Calculate total hours
     start_dt = dt.strptime(booking.start_time, "%H:%M")
@@ -360,6 +385,14 @@ def create_booking(db: Session, booking: BookingCreate, user_id: int) -> Booking
     db.add(db_booking)
     db.commit()
     db.refresh(db_booking)
+
+    if parent_court.court_type == "social":
+        db.add(BookingParticipant(
+            booking_id=db_booking.id,
+            user_id=user_id,
+            ticket_quantity=booking.ticket_quantity,
+        ))
+        db.commit()
     
     # Generate VietQR code if payment method is vietqr
     if booking.payment_method == "vietqr":

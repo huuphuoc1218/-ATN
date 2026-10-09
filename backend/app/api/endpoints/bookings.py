@@ -7,11 +7,17 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
+from sqlalchemy import func
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 
 from app.core.database import get_db, SessionLocal
 from app.core.security import get_current_user, get_current_owner
 from app.models.user import User
-from app.models.court import PaymentMethod, BookingInvite
+from app.models.court import PaymentMethod, BookingInvite, BookingParticipant
 from app.models.friend import Friendship
 from app.models.notification import Notification
 from app.schemas.court import (
@@ -49,6 +55,85 @@ from app.core.email_service import send_booking_qr_email
 from app.schemas.notification import NotificationCreate
 
 router = APIRouter()
+
+LOCAL_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def _is_social_session_expired(court, booking_date, end_time: str) -> bool:
+    now = datetime.now(LOCAL_TIMEZONE)
+    if getattr(booking_date, "tzinfo", None) is not None:
+        booking_date = booking_date.astimezone(LOCAL_TIMEZONE).date()
+    elif hasattr(booking_date, "date"):
+        booking_date = booking_date.date()
+    if booking_date < now.date():
+        return True
+    if booking_date > now.date():
+        return False
+    try:
+        end_hour, end_minute = (int(part) for part in end_time.split(":", 1))
+        end_datetime = now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+        return now >= end_datetime
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _is_social_booking_expired(booking, court) -> bool:
+    return _is_social_session_expired(court, booking.booking_date, court.social_end_time or booking.end_time)
+
+
+def _get_social_session_bookings(db: Session, booking, court):
+    """Return all booking records that represent the same social session."""
+    return (
+        db.query(court_crud.Booking)
+        .join(
+            court_crud.IndividualCourt,
+            court_crud.Booking.individual_court_id == court_crud.IndividualCourt.id,
+        )
+        .filter(
+            court_crud.IndividualCourt.court_id == court.id,
+            func.date(court_crud.Booking.booking_date) == booking.booking_date.date(),
+            court_crud.Booking.start_time == booking.start_time,
+            court_crud.Booking.end_time == booking.end_time,
+            court_crud.Booking.status.in_(["pending", "confirmed", "active"]),
+        )
+        .order_by(court_crud.Booking.id.asc())
+        .all()
+    )
+
+
+def _get_social_ticket_count(db: Session, court, booking_date, start_time: str, end_time: str) -> int:
+    booking_date_value = booking_date.date() if hasattr(booking_date, "date") else booking_date
+    booking_ids = [item.id for item in (
+        db.query(court_crud.Booking)
+        .join(
+            court_crud.IndividualCourt,
+            court_crud.Booking.individual_court_id == court_crud.IndividualCourt.id,
+        )
+        .filter(
+            court_crud.IndividualCourt.court_id == court.id,
+            func.date(court_crud.Booking.booking_date) == booking_date_value,
+            court_crud.Booking.start_time == start_time,
+            court_crud.Booking.end_time == end_time,
+            court_crud.Booking.status.in_(["pending", "confirmed", "active"]),
+        )
+        .all()
+    )]
+    if not booking_ids:
+        return 0
+
+    return sum(
+        participant.ticket_quantity
+        for participant in db.query(BookingParticipant)
+        .filter(BookingParticipant.booking_id.in_(booking_ids))
+        .all()
+    )
+
+    try:
+        end_hour, end_minute = (int(part) for part in booking.end_time.split(":", 1))
+        end_time = now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+        return now >= end_time
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def _send_confirm_payment_email(
@@ -302,6 +387,31 @@ async def get_payment_preview(
             detail="Không tìm thấy thông tin sân"
         )
 
+    if court.court_type == "social" and court.social_start_time and court.social_end_time:
+        if preview_data.start_time != court.social_start_time or preview_data.end_time != court.social_end_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Social court chỉ mở từ {court.social_start_time} đến {court.social_end_time}.",
+            )
+    if court.court_type == "social" and court.social_date:
+        if preview_data.booking_date.date() != court.social_date:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Social court chỉ mở vào ngày đã công bố.")
+    if court.court_type == "social" and _is_social_session_expired(
+        court, preview_data.booking_date, court.social_end_time or preview_data.end_time
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social này đã hết hạn, không thể mua vé.")
+
+    if court.court_type == "social":
+        max_players = court.social_max_players or 2
+        used_tickets = _get_social_ticket_count(
+            db, court, preview_data.booking_date, preview_data.start_time, preview_data.end_time
+        )
+        if used_tickets + preview_data.ticket_quantity > max_players:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Chỉ còn {max_players - used_tickets} vé cho social này.",
+            )
+
     available_courts = court_crud.find_available_courts(
         db,
         court.id,
@@ -310,7 +420,7 @@ async def get_payment_preview(
         preview_data.end_time,
     )
 
-    if not available_courts:
+    if not available_courts and court.court_type != "social":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Tất cả sân đã có lịch đặt trong khung giờ này. Vui lòng chọn khung giờ khác.",
@@ -329,6 +439,10 @@ async def get_payment_preview(
         preview_data.end_time,
         court.time_slots or []
     )
+    if court.court_type == "social" and court.social_ticket_price:
+        amount = float(court.social_ticket_price)
+    if court.court_type == "social":
+        amount *= preview_data.ticket_quantity
 
     if amount <= 0:
         raise HTTPException(
@@ -375,6 +489,31 @@ async def create_booking(
     - For cash payment: booking is automatically confirmed
     """
     try:
+        requested_individual = court_crud.get_individual_court(db, booking_data.individual_court_id)
+        parent_court = court_crud.get_court(db, requested_individual.court_id) if requested_individual else None
+        if parent_court and parent_court.court_type == "social" and parent_court.social_start_time and parent_court.social_end_time:
+            if booking_data.start_time != parent_court.social_start_time or booking_data.end_time != parent_court.social_end_time:
+                raise ValueError(
+                    f"Social court chỉ mở từ {parent_court.social_start_time} đến {parent_court.social_end_time}."
+                )
+        if parent_court and parent_court.court_type == "social" and parent_court.social_date:
+            if booking_data.booking_date.date() != parent_court.social_date:
+                raise ValueError("Social court chỉ mở vào ngày đã công bố.")
+        if parent_court and parent_court.court_type == "social" and _is_social_session_expired(
+            parent_court, booking_data.booking_date, parent_court.social_end_time or booking_data.end_time
+        ):
+            raise ValueError("Social này đã hết hạn, không thể mua vé.")
+        if parent_court and parent_court.court_type == "social":
+            max_players = parent_court.social_max_players or 2
+            used_tickets = _get_social_ticket_count(
+                db,
+                parent_court,
+                booking_data.booking_date,
+                booking_data.start_time,
+                booking_data.end_time,
+            )
+            if used_tickets + booking_data.ticket_quantity > max_players:
+                raise ValueError(f"Chỉ còn {max_players - used_tickets} vé cho social này.")
         # Create booking with payment
         booking = court_crud.create_booking(
             db=db,
@@ -402,6 +541,212 @@ async def create_booking(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Không thể tạo booking: {str(e)}"
         )
+
+
+@router.get("/social")
+async def list_social_bookings(
+    court_id: int,
+    booking_date: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        requested_date = datetime.strptime(booking_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid booking_date format. Use YYYY-MM-DD")
+
+    bookings = (
+        db.query(court_crud.Booking)
+        .join(court_crud.IndividualCourt, court_crud.Booking.individual_court_id == court_crud.IndividualCourt.id)
+        .filter(
+            court_crud.IndividualCourt.court_id == court_id,
+            func.date(court_crud.Booking.booking_date) == requested_date,
+            court_crud.Booking.status.in_(["pending", "confirmed", "active"]),
+        )
+        .all()
+    )
+    court = court_crud.get_court(db, court_id)
+    if not court or court.court_type != "social":
+        return []
+
+    sessions = []
+    grouped_bookings = {}
+    for booking in bookings:
+        grouped_bookings.setdefault((booking.start_time, booking.end_time), []).append(booking)
+
+    for session_bookings in grouped_bookings.values():
+        booking = session_bookings[0]
+        participants = db.query(BookingParticipant).filter(
+            BookingParticipant.booking_id.in_([item.id for item in session_bookings])
+        ).all()
+        count = sum(participant.ticket_quantity for participant in participants)
+        expired = _is_social_booking_expired(booking, court)
+        sessions.append({
+            "booking_id": booking.id,
+            "booking_date": booking.booking_date,
+            "start_time": booking.start_time,
+            "end_time": booking.end_time,
+            "count": count,
+            "max_players": court.social_max_players or 2,
+            "status": "expired" if expired else ("full" if count >= (court.social_max_players or 2) else "active"),
+            "participants": [
+                {"user_id": participant.user_id, "full_name": participant.user.full_name, "tickets": participant.ticket_quantity}
+                for participant in participants
+            ],
+        })
+    return sessions
+
+
+def _get_social_booking_context(db: Session, booking_id: int):
+    booking = court_crud.get_booking(db, booking_id)
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy booking")
+
+    individual_court = court_crud.get_individual_court(db, booking.individual_court_id)
+    court = court_crud.get_court(db, individual_court.court_id) if individual_court else None
+    if not court or court.court_type != "social":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Booking này không phải social")
+    return booking, court
+
+
+@router.get("/{booking_id}/social-participants")
+async def list_social_participants(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    booking, court = _get_social_booking_context(db, booking_id)
+    if _is_social_booking_expired(booking, court):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social booking đã hết hạn")
+    if booking.status not in ["pending", "confirmed", "active"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social booking không còn hoạt động")
+
+    session_bookings = _get_social_session_bookings(db, booking, court)
+    session_booking_ids = [item.id for item in session_bookings]
+    participants = (
+        db.query(BookingParticipant)
+        .filter(BookingParticipant.booking_id == booking.id)
+        .order_by(BookingParticipant.joined_at.asc())
+        .all()
+    )
+    return {
+        "booking_id": booking.id,
+        "court_id": court.id,
+        "max_players": court.social_max_players,
+        "count": sum(participant.ticket_quantity for participant in participants),
+        "participants": [
+            {"user_id": participant.user_id, "full_name": participant.user.full_name, "tickets": participant.ticket_quantity, "joined_at": participant.joined_at}
+            for participant in participants
+        ],
+    }
+
+
+@router.post("/{booking_id}/join-social")
+async def join_social_booking(
+    booking_id: int,
+    ticket_quantity: int = 1,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    booking, court = _get_social_booking_context(db, booking_id)
+    if _is_social_booking_expired(booking, court):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social booking đã hết hạn")
+    if booking.status not in ["pending", "confirmed", "active"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social booking không còn hoạt động")
+
+    session_bookings = _get_social_session_bookings(db, booking, court)
+    session_booking_ids = [item.id for item in session_bookings]
+    if ticket_quantity < 1 or ticket_quantity > 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số vé phải từ 1 đến 20")
+
+    existing = db.query(BookingParticipant).filter(
+        BookingParticipant.booking_id.in_(session_booking_ids),
+        BookingParticipant.user_id == current_user.id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bạn đã tham gia social booking này")
+
+    participant_count = sum(
+        participant.ticket_quantity
+        for participant in db.query(BookingParticipant).filter(
+            BookingParticipant.booking_id.in_(session_booking_ids)
+        ).all()
+    )
+    max_players = court.social_max_players or 2
+    if participant_count >= max_players:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social booking đã đủ người")
+
+    if participant_count + ticket_quantity > max_players:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Không đủ vé trống cho số lượng đã chọn")
+
+    owner = get_user_by_id(db, court.owner_id)
+    ticket_price = float(court.social_ticket_price or 0) if court.court_type == "social" else calculate_multi_tier_price(booking.start_time, booking.end_time, court.time_slots or [])
+    total_price = ticket_price * ticket_quantity
+    payment_info = None
+    qr_code_url = None
+    if owner and owner.bank_account_number and owner.bank_code:
+        payment_content = f"SOCIAL{booking.id}-{current_user.id}"
+        qr_code_url = VietQRService().generate_qr_url(
+            bank_code=owner.bank_code,
+            account_number=owner.bank_account_number,
+            amount=int(total_price),
+            description=payment_content,
+            account_name=owner.bank_account_name,
+        )
+        payment_info = {
+            "qr_code_url": qr_code_url,
+            "bank_name": owner.bank_name or "Ngân hàng",
+            "account_number": owner.bank_account_number,
+            "account_name": owner.bank_account_name or owner.full_name,
+            "amount": total_price,
+            "content": payment_content,
+            "booking_id": booking.id,
+            "expires_at": datetime.utcnow(),
+        }
+
+    participant = BookingParticipant(
+        booking_id=booking.id,
+        user_id=current_user.id,
+        ticket_quantity=ticket_quantity,
+        total_price=total_price,
+        qr_code_url=qr_code_url,
+    )
+    db.add(participant)
+    db.commit()
+    db.refresh(participant)
+    return {
+        "booking_id": booking.id,
+        "user_id": current_user.id,
+        "tickets": ticket_quantity,
+        "count": participant_count + ticket_quantity,
+        "max_players": max_players,
+        "payment_info": payment_info,
+    }
+
+
+@router.delete("/{booking_id}/leave-social")
+async def leave_social_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    booking, court = _get_social_booking_context(db, booking_id)
+    participant = db.query(BookingParticipant).filter(
+        BookingParticipant.booking_id == booking.id,
+        BookingParticipant.user_id == current_user.id,
+    ).first()
+    if not participant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bạn chưa tham gia social booking này")
+    if current_user.id == booking.user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Người tạo booking không thể rời booking")
+
+    db.delete(participant)
+    db.commit()
+    remaining = sum(
+        item.ticket_quantity
+        for item in db.query(BookingParticipant).filter(BookingParticipant.booking_id == booking.id).all()
+    )
+    return {"booking_id": booking.id, "count": remaining, "max_players": court.social_max_players or 2}
 
 
 @router.get("/{booking_id}", response_model=Booking)

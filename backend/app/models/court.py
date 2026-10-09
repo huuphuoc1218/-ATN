@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Enum as SQLEnum, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime, Text, ForeignKey, JSON, Enum as SQLEnum, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -41,6 +41,12 @@ class Court(Base):
     ward = Column(String, nullable=False)
     city = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    court_type = Column(String(20), nullable=False, default="standard", server_default="standard")
+    social_max_players = Column(Integer, nullable=True)
+    social_start_time = Column(String(5), nullable=True)
+    social_end_time = Column(String(5), nullable=True)
+    social_date = Column(Date, nullable=True)
+    social_ticket_price = Column(Numeric(10, 2), nullable=True)
     court_quantity = Column(Integer, nullable=False, default=1)  # Number of individual courts
     opening_time = Column(String, nullable=False)  # Format: "HH:MM"
     closing_time = Column(String, nullable=False)  # Format: "HH:MM"
@@ -111,6 +117,28 @@ class Booking(Base):
     # Relationships
     individual_court = relationship("IndividualCourt", back_populates="bookings")
     user = relationship("User", back_populates="bookings")
+    participants = relationship("BookingParticipant", back_populates="booking", cascade="all, delete-orphan")
+    invites = relationship("BookingInvite", back_populates="booking", cascade="all, delete-orphan")
+
+
+class BookingParticipant(Base):
+    """A user who has joined a social booking."""
+    __tablename__ = "booking_participants"
+    __table_args__ = (
+        UniqueConstraint("booking_id", "user_id", name="uq_booking_participants_booking_user"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    ticket_quantity = Column(Integer, nullable=False, default=1, server_default="1")
+    total_price = Column(Numeric(10, 2), nullable=True)
+    payment_status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    qr_code_url = Column(String, nullable=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    booking = relationship("Booking", back_populates="participants")
+    user = relationship("User")
 
 
 class BookingInvite(Base):
@@ -130,6 +158,6 @@ class BookingInvite(Base):
     responded_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    booking = relationship("Booking")
+    booking = relationship("Booking", back_populates="invites")
     inviter = relationship("User", foreign_keys=[inviter_user_id])
     invitee = relationship("User", foreign_keys=[invitee_user_id])

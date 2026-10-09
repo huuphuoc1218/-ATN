@@ -279,7 +279,44 @@ onMounted(() => {
               <span>{{ formatPrice(court.social_ticket_price || 0) }} VND / ticket</span>
             </div>
           </div>
-          <img :src="courtImages[0]" :alt="court.name" class="social-hero-image" />
+          <div class="social-hero-carousel">
+            <img
+              v-for="(img, index) in courtImages"
+              :key="img"
+              :src="img"
+              :alt="`${court.name} - Image ${index + 1}`"
+              :class="{ active: index === currentImageIndex }"
+              class="social-hero-image"
+            />
+            <button
+              v-if="courtImages.length > 1"
+              class="social-carousel-btn prev"
+              type="button"
+              aria-label="Previous image"
+              @click="previousImage"
+            >
+              ‹
+            </button>
+            <button
+              v-if="courtImages.length > 1"
+              class="social-carousel-btn next"
+              type="button"
+              aria-label="Next image"
+              @click="nextImage"
+            >
+              ›
+            </button>
+            <div v-if="courtImages.length > 1" class="social-carousel-indicators">
+              <button
+                v-for="(_img, index) in courtImages"
+                :key="index"
+                type="button"
+                :class="{ active: index === currentImageIndex }"
+                :aria-label="`Go to image ${index + 1}`"
+                @click="goToImage(index)"
+              ></button>
+            </div>
+          </div>
         </section>
 
         <section class="social-content">
@@ -921,6 +958,75 @@ onMounted(() => {
   height: 100%;
   min-height: 390px;
   object-fit: cover;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+
+.social-hero-image.active {
+  opacity: 1;
+}
+
+.social-hero-carousel {
+  position: relative;
+  min-height: 390px;
+  overflow: hidden;
+}
+
+.social-carousel-btn {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(16, 42, 42, 0.72);
+  color: #f4f8ef;
+  cursor: pointer;
+  font-size: 2rem;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.social-carousel-btn:hover {
+  background: #102a2a;
+}
+
+.social-carousel-btn.prev {
+  left: 18px;
+}
+
+.social-carousel-btn.next {
+  right: 18px;
+}
+
+.social-carousel-indicators {
+  position: absolute;
+  right: 0;
+  bottom: 18px;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.social-carousel-indicators button {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 1px solid #f4f8ef;
+  border-radius: 50%;
+  background: rgba(244, 248, 239, 0.55);
+  cursor: pointer;
+}
+
+.social-carousel-indicators button.active {
+  width: 26px;
+  border-radius: 8px;
+  background: #e5ff4f;
 }
 
 .social-content {
@@ -1829,6 +1935,11 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .social-hero-carousel,
+  .social-hero-image {
+    min-height: 280px;
+  }
+
   .carousel-container {
     height: 250px;
   }

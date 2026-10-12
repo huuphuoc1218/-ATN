@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "Pickleball NP SPORTCLUB"
     SMTP_USE_TLS: bool = True
 
+    # Resend email API (preferred on Render; uses HTTPS instead of SMTP)
+    RESEND_API_KEY: Optional[str] = None
+    RESEND_FROM_EMAIL: Optional[str] = None
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: Any) -> List[str]:

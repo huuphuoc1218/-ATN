@@ -1,18 +1,29 @@
 import smtplib
+import logging
 from email.message import EmailMessage
 from html import escape
 from typing import Tuple
 
+import requests
+
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def is_email_configured() -> bool:
     return bool(
-        settings.SMTP_HOST
-        and settings.SMTP_PORT
-        and settings.SMTP_USERNAME
-        and settings.SMTP_PASSWORD
-        and settings.SMTP_FROM_EMAIL
+        (
+            settings.RESEND_API_KEY
+            and settings.RESEND_FROM_EMAIL
+        )
+        or (
+            settings.SMTP_HOST
+            and settings.SMTP_PORT
+            and settings.SMTP_USERNAME
+            and settings.SMTP_PASSWORD
+            and settings.SMTP_FROM_EMAIL
+        )
     )
 
 
@@ -32,7 +43,11 @@ def send_booking_qr_email(
   ) -> Tuple[bool, str]:
     """Send booking confirmation email with QR code image to customer."""
     if not is_email_configured():
-        return False, "SMTP is not fully configured"
+        logger.error(
+            "Email is not configured; booking confirmation email was not sent. "
+            "Configure RESEND_API_KEY and RESEND_FROM_EMAIL, or the SMTP variables."
+        )
+        return False, "Email provider is not configured"
 
     subject = f"[NP SPORTCLUB] Payment confirmed for booking #{booking_id}"
 
@@ -94,34 +109,56 @@ def send_booking_qr_email(
     </html>
     """.strip()
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-    msg["To"] = to_email
-    msg.set_content(
-        "\n".join(
-            [
-                f"Payment for booking #{booking_id} has been confirmed.",
-                f"Court: {court_name} - {individual_court_name}",
-                f"Booking date: {booking_date}",
-                f"Time slot: {start_time} - {end_time}",
-                f"Total amount: {total_price} VND",
-                f"View details: {booking_info_url}",
-            ]
-        )
-    )
-    msg.add_alternative(html_body, subtype="html")
-
     try:
+        if settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL:
+            resend_headers = {
+                "Authorization": "Bearer " + settings.RESEND_API_KEY,
+                "Content-Type": "application/json",
+            }
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers=resend_headers,
+                json={
+                    "from": settings.RESEND_FROM_EMAIL,
+                    "to": [to_email],
+                    "subject": subject,
+                    "html": html_body,
+                },
+                timeout=smtp_timeout,
+            )
+            if not response.ok:
+                detail = response.text[:500].replace("\n", " ")
+                return False, f"Resend API returned HTTP {response.status_code}: {detail}"
+            return True, "Email sent successfully via Resend"
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["To"] = to_email
+        msg.set_content(
+            "\n".join(
+                [
+                    f"Payment for booking #{booking_id} has been confirmed.",
+                    f"Court: {court_name} - {individual_court_name}",
+                    f"Booking date: {booking_date}",
+                    f"Time slot: {start_time} - {end_time}",
+                    f"Total amount: {total_price} VND",
+                    f"View details: {booking_info_url}",
+                ]
+            )
+        )
+        msg.add_alternative(html_body, subtype="html")
+
         if settings.SMTP_USE_TLS:
-          with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=smtp_timeout) as server:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=smtp_timeout) as server:
                 server.starttls()
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.send_message(msg)
         else:
-          with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=smtp_timeout) as server:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=smtp_timeout) as server:
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.send_message(msg)
-        return True, "Email sent successfully"
+        return True, "Email sent successfully via SMTP"
     except Exception as exc:
+        logger.exception("Failed to send booking confirmation email to %s", to_email)
         return False, f"Email sending failed: {exc}"

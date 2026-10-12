@@ -27,6 +27,7 @@ class Notification(NotificationBase):
 
 # Court Request Schemas
 class CourtRequestBase(BaseModel):
+    court_id: Optional[int] = None
     name: str
     address: str
     ward: str

@@ -2,6 +2,7 @@
 Booking endpoints with VietQR payment integration
 """
 import secrets
+import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -55,6 +56,7 @@ from app.core.email_service import send_booking_qr_email
 from app.schemas.notification import NotificationCreate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 LOCAL_TIMEZONE = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -173,6 +175,7 @@ def _send_confirm_payment_email(
         booking.payment_note = f"EMAIL_SENT: {sent_msg}" if sent_ok else f"EMAIL_FAILED: {sent_msg}"
         db.commit()
     except Exception:
+        logger.exception("Failed to process confirmation email for booking %s", booking_id)
         db.rollback()
     finally:
         db.close()
@@ -548,7 +551,6 @@ async def list_social_bookings(
     court_id: int,
     booking_date: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     try:
         requested_date = datetime.strptime(booking_date, "%Y-%m-%d").date()

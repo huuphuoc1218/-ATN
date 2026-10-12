@@ -13,12 +13,20 @@ from datetime import datetime
 
 
 # Notification CRUD
-def create_notification(db: Session, notification: NotificationCreate) -> Notification:
+def create_notification(
+    db: Session,
+    notification: NotificationCreate,
+    *,
+    commit: bool = True,
+) -> Notification:
     """Create a new notification"""
     db_notification = Notification(**notification.model_dump())
     db.add(db_notification)
-    db.commit()
-    db.refresh(db_notification)
+    if commit:
+        db.commit()
+        db.refresh(db_notification)
+    else:
+        db.flush()
     return db_notification
 
 
@@ -59,8 +67,9 @@ def mark_all_as_read(db: Session, user_id: int):
 # Court Request CRUD
 def create_court_request(db: Session, request: CourtRequestCreate, owner_id: int) -> CourtRequest:
     """Create a new court registration request"""
+    request_data = request.model_dump()
     db_request = CourtRequest(
-        **request.model_dump(),
+        **request_data,
         owner_id=owner_id,
         status="pending"
     )
@@ -112,7 +121,9 @@ def update_court_request_status(
     db: Session, 
     request_id: int, 
     update: CourtRequestUpdate, 
-    reviewer_id: int
+    reviewer_id: int,
+    *,
+    commit: bool = True,
 ) -> Optional[CourtRequest]:
     """Update court request status (approve/reject)"""
     request = db.query(CourtRequest).filter(CourtRequest.id == request_id).first()
@@ -121,8 +132,11 @@ def update_court_request_status(
         request.rejection_reason = update.rejection_reason
         request.reviewed_by = reviewer_id
         request.reviewed_at = datetime.utcnow()
-        db.commit()
-        db.refresh(request)
+        if commit:
+            db.commit()
+            db.refresh(request)
+        else:
+            db.flush()
     return request
 
 

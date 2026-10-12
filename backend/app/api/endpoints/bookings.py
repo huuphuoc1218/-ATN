@@ -288,6 +288,44 @@ def _respond_to_booking_invite(invite: BookingInvite, current_user: User, action
     if invite.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This invite has already been handled")
 
+    booking = court_crud.get_booking(db, invite.booking_id)
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    individual_court = court_crud.get_individual_court(db, booking.individual_court_id)
+    court = court_crud.get_court(db, individual_court.court_id) if individual_court else None
+    if not court:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Court not found")
+
+    requires_purchase = False
+    if action == "accept" and court.court_type == "social":
+        session_bookings = _get_social_session_bookings(db, booking, court)
+        session_booking_ids = [item.id for item in session_bookings]
+
+        # A participant who already bought a ticket keeps that ticket. In
+        # particular, accepting an invite must not consume the inviter's spare ticket.
+        existing_participant = db.query(BookingParticipant).filter(
+            BookingParticipant.booking_id.in_(session_booking_ids),
+            BookingParticipant.user_id == current_user.id,
+        ).first()
+
+        if not existing_participant:
+            inviter_participant = db.query(BookingParticipant).filter(
+                BookingParticipant.booking_id == invite.booking_id,
+                BookingParticipant.user_id == invite.inviter_user_id,
+            ).first()
+            if inviter_participant and inviter_participant.ticket_quantity > 1:
+                inviter_participant.ticket_quantity -= 1
+                db.add(BookingParticipant(
+                    booking_id=invite.booking_id,
+                    user_id=current_user.id,
+                    ticket_quantity=1,
+                    total_price=0,
+                    payment_status="covered_by_inviter",
+                ))
+            else:
+                requires_purchase = True
+
     invite.status = "accepted" if action == "accept" else "rejected"
     invite.responded_at = datetime.utcnow()
 
@@ -324,8 +362,14 @@ def _respond_to_booking_invite(invite: BookingInvite, current_user: User, action
         "booking_id": invite.booking_id,
         "code": invite.code,
         "status": invite.status,
-        "message": "Booking invite accepted" if action == "accept" else "Booking invite rejected",
+        "message": (
+            "Booking invite accepted"
+            if action == "accept"
+            else "Booking invite rejected"
+        ),
         "responded_at": invite.responded_at,
+        "court_id": court.id,
+        "requires_purchase": requires_purchase,
     }
 
 
@@ -1225,6 +1269,8 @@ async def respond_booking_invite_code(
         "status": result["status"],
         "message": result["message"],
         "responded_at": result["responded_at"],
+        "court_id": result.get("court_id"),
+        "requires_purchase": result.get("requires_purchase", False),
     }
 
 

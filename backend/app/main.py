@@ -2,13 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import engine, Base, ensure_schema_updates
 from app.api.api import api_router
 from app.api.endpoints import webhooks
 from app.core.storage import ensure_uploads_root
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+ensure_schema_updates()
 
 app = FastAPI(
     title="Pickleball NP SPORTCLUB API",

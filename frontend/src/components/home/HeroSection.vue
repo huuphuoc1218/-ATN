@@ -11,7 +11,7 @@ const isAutoPlaying = ref(true)
 let autoPlayInterval: number | null = null
 
 interface HomeAdvertisement {
-  id: number
+  id: number | string
   title: string
   description: string
   company: string
@@ -20,12 +20,13 @@ interface HomeAdvertisement {
   image: string
   link: string
   click_count?: number
+  isApprovedAdvertisement?: boolean
 }
 
-// Mock data - sẽ được thay thế bằng API call trong tương lai
+// Built-in advertisements remain visible alongside approved enterprise advertisements.
 const advertisements = ref<HomeAdvertisement[]>([
   {
-    id: 1,
+    id: 'default-1',
     title: 'Premium Sports Equipment Sale',
     description: 'Professional paddles & gear with exclusive 30% discount for members',
     company: 'SportGear Pro',
@@ -35,7 +36,7 @@ const advertisements = ref<HomeAdvertisement[]>([
     link: '#',
   },
   {
-    id: 2,
+    id: 'default-2',
     title: 'Elite Championship Training',
     description: 'Learn from pro coaches. Limited slots available this season',
     company: 'Elite Training Center',
@@ -45,7 +46,7 @@ const advertisements = ref<HomeAdvertisement[]>([
     link: '#',
   },
   {
-    id: 3,
+    id: 'default-3',
     title: 'VIP Court Membership 2025',
     description: 'Unlimited access to premium courts + exclusive benefits',
     company: 'VIP Court Access',
@@ -55,7 +56,7 @@ const advertisements = ref<HomeAdvertisement[]>([
     link: '#',
   },
   {
-    id: 4,
+    id: 'default-4',
     title: 'Tournament Registration Open',
     description: 'Join the biggest pickleball tournament in Vietnam',
     company: 'NP Sports Events',
@@ -80,8 +81,8 @@ const fetchApprovedAdvertisements = async () => {
     const items = response.data?.data || response.data || []
     if (!Array.isArray(items) || items.length === 0) return
 
-    advertisements.value = items.map((item: any) => ({
-      id: item.id,
+    const approvedAdvertisements = items.map((item: any): HomeAdvertisement => ({
+      id: `approved-${item.id}`,
       title: item.name,
       description: item.description,
       company: item.owner?.full_name || 'Verified Partner',
@@ -90,7 +91,11 @@ const fetchApprovedAdvertisements = async () => {
       image: resolveImageUrl(item.image_url),
       link: item.detail_url,
       click_count: item.click_count || 0,
+      isApprovedAdvertisement: true,
     }))
+
+    // Show approved enterprise advertisements first while keeping built-in ads available.
+    advertisements.value = [...approvedAdvertisements, ...advertisements.value]
     currentAdIndex.value = 0
   } catch (error) {
     console.error('Failed to load approved advertisements:', error)
@@ -100,14 +105,17 @@ const fetchApprovedAdvertisements = async () => {
 const handleAdClick = async (ad: HomeAdvertisement) => {
   if (!ad.link) return
 
-  try {
-    await axios.post(`/advertisements/${ad.id}/click`)
-    const current = advertisements.value[currentAdIndex.value]
-    if (current && current.id === ad.id) {
-      current.click_count = (current.click_count || 0) + 1
+  if (ad.isApprovedAdvertisement) {
+    try {
+      const requestId = String(ad.id).replace(/^approved-/, '')
+      await axios.post(`/advertisements/${requestId}/click`)
+      const current = advertisements.value[currentAdIndex.value]
+      if (current && current.id === ad.id) {
+        current.click_count = (current.click_count || 0) + 1
+      }
+    } catch (error) {
+      console.error('Failed to track ad click:', error)
     }
-  } catch (error) {
-    console.error('Failed to track ad click:', error)
   }
 
   window.open(ad.link, '_blank', 'noopener,noreferrer')

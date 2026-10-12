@@ -152,16 +152,27 @@ const timeSlots = ref<TimeSlot[]>([])
 let nextSlotId = 1
 
 const currentCourtId = ref<number | null>(null)
+const ownedCourts = ref<Array<{ id: number; name: string; court_type?: 'standard' | 'social' }>>([])
 const isEditMode = ref(false)
 const requestMode = ref<'update' | 'new'>('new')
 const hasExistingCourt = ref(false)
 
 // Fetch approved court if exists
-const fetchApprovedCourt = async () => {
+const fetchApprovedCourt = async (courtId?: number) => {
   try {
     const response = await axiosInstance.get('/courts/my')
-    if (response.data && response.data.length > 0) {
-      const court = response.data[0]
+    const courtsData = response.data || []
+    ownedCourts.value = courtsData.map(
+      (item: { id: number; name: string; court_type?: 'standard' | 'social' }) => ({
+        id: item.id,
+        name: item.name,
+        court_type: item.court_type,
+      }),
+    )
+    if (courtsData.length > 0) {
+      const selectedCourtId = courtId ?? currentCourtId.value
+      const court =
+        courtsData.find((item: { id: number }) => item.id === selectedCourtId) || courtsData[0]
       hasExistingCourt.value = true
       currentCourtId.value = court.id
       isEditMode.value = true
@@ -360,7 +371,7 @@ const startNewCourt = () => {
 
 const editExistingCourt = () => {
   requestMode.value = 'update'
-  fetchApprovedCourt()
+  fetchApprovedCourt(currentCourtId.value ?? ownedCourts.value[0]?.id)
 }
 
 const validateForm = () => {
@@ -637,6 +648,7 @@ const handleSubmit = async () => {
             })),
       ),
       images: allImages.length > 0 ? JSON.stringify(allImages) : null,
+      court_id: requestMode.value === 'update' ? currentCourtId.value : null,
       is_new_court: requestMode.value === 'new',
     }
 
@@ -739,32 +751,77 @@ const formatTimeWithPeriod = (time: string) => {
 
     <div class="request-workflow-card">
       <div class="workflow-title-row">
-        <span class="workflow-badge">Approval Workflow</span>
-        <strong>{{ requestMode === 'update' ? 'Update Mode' : 'Create Mode' }}</strong>
+        <div class="workflow-heading">
+          <div class="workflow-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v18M3 12h18" />
+              <path d="m7 7 5-4 5 4M7 17l5 4 5-4" />
+            </svg>
+          </div>
+          <div>
+            <span class="workflow-eyebrow">Court request</span>
+            <h2>Approval workflow</h2>
+          </div>
+        </div>
+        <span class="workflow-status">
+          <span class="workflow-status-dot"></span>
+          {{ requestMode === 'update' ? 'Editing a court' : 'Adding a new court' }}
+        </span>
       </div>
       <div v-if="hasExistingCourt" class="request-mode-actions">
+        <label class="court-selection">
+          <span class="court-selection-label">Court to edit</span>
+          <select
+            v-model="currentCourtId"
+            :disabled="requestMode !== 'update'"
+            @change="editExistingCourt"
+          >
+            <option v-for="court in ownedCourts" :key="court.id" :value="court.id">
+              {{ court.name }}{{ court.court_type === 'social' ? ' · Social' : '' }}
+            </option>
+          </select>
+        </label>
         <button
           type="button"
           :class="{ active: requestMode === 'update' }"
           @click="editExistingCourt"
         >
+          <span class="mode-button-icon">✎</span>
           Edit existing court
         </button>
         <button type="button" :class="{ active: requestMode === 'new' }" @click="startNewCourt">
+          <span class="mode-button-icon">+</span>
           Add new court
         </button>
       </div>
-      <p class="workflow-text">
-        {{
-          requestMode === 'update'
-            ? 'Changes are submitted as an update request and will only be applied after admin approval.'
-            : 'This new court is submitted separately and will appear after admin approval.'
-        }}
-      </p>
+      <div class="workflow-message">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 10v6M12 7.5v.01" />
+        </svg>
+        <p class="workflow-text">
+          {{
+            requestMode === 'update'
+              ? 'Your changes will be sent to an administrator and applied after approval.'
+              : 'Your new court will be reviewed by an administrator before it goes live.'
+          }}
+        </p>
+      </div>
       <div class="workflow-steps">
-        <span>1. Submit request</span>
-        <span>2. Admin reviews</span>
-        <span>3. Data is published</span>
+        <div class="workflow-step">
+          <span class="step-number">1</span>
+          <span>Submit request</span>
+        </div>
+        <span class="step-connector"></span>
+        <div class="workflow-step">
+          <span class="step-number">2</span>
+          <span>Admin reviews</span>
+        </div>
+        <span class="step-connector"></span>
+        <div class="workflow-step">
+          <span class="step-number">3</span>
+          <span>Published</span>
+        </div>
       </div>
     </div>
 
@@ -1563,40 +1620,180 @@ const formatTimeWithPeriod = (time: string) => {
 }
 
 .request-workflow-card {
-  background: linear-gradient(135deg, #eff6ff 0%, #ecfeff 100%);
-  border: 1px solid #bfdbfe;
-  border-radius: 14px;
-  padding: 16px 18px;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #f0fdf4 0%, #f0fdfa 52%, #eff6ff 100%);
+  border: 1px solid #bbf7d0;
+  border-radius: 18px;
+  padding: 22px 24px;
+  box-shadow: 0 8px 24px rgba(22, 101, 52, 0.08);
+}
+
+.request-workflow-card::after {
+  content: '';
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  right: -80px;
+  top: -90px;
+  border-radius: 50%;
+  background: rgba(134, 239, 172, 0.2);
+  pointer-events: none;
 }
 
 .request-mode-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 14px 0;
+  gap: 10px;
+  margin: 20px 0 16px;
+  align-items: end;
+  position: relative;
+  z-index: 1;
+}
+
+.court-selection {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 6px;
+  color: #166534;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.court-selection select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 36px 0 12px;
+  border: 1px solid #86efac;
+  border-radius: 10px;
+  background: #fff;
+  color: #14532d;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+
+.court-selection select:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
 }
 
 .request-mode-actions button {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 9px 13px;
+  min-height: 42px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 9px 14px;
   background: #fff;
   color: #475569;
   cursor: pointer;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: all 0.2s ease;
+}
+
+.request-mode-actions button:hover {
+  border-color: #4ade80;
+  color: #166534;
+  transform: translateY(-1px);
 }
 
 .request-mode-actions button.active {
-  border-color: #2d5016;
-  background: #2d5016;
+  border-color: #15803d;
+  background: #15803d;
   color: #fff;
+  box-shadow: 0 4px 10px rgba(21, 128, 61, 0.2);
+}
+
+.mode-button-icon {
+  width: 19px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 1rem;
 }
 
 .workflow-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.workflow-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workflow-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.workflow-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.workflow-eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: #16a34a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.workflow-heading h2 {
+  margin: 0;
+  color: #14532d;
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.workflow-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #166534;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workflow-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px #dcfce7;
 }
 
 .workflow-badge {
@@ -1610,18 +1807,68 @@ const formatTimeWithPeriod = (time: string) => {
 
 .workflow-text {
   margin: 0;
-  color: #1e3a8a;
-  font-size: 0.9rem;
+  color: #365314;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.workflow-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 2px 0 20px;
+  padding: 11px 13px;
+  border: 1px solid rgba(134, 239, 172, 0.7);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+  position: relative;
+  z-index: 1;
+}
+
+.workflow-message svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  stroke: #16a34a;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .workflow-steps {
-  margin-top: 10px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  color: #334155;
-  font-size: 0.82rem;
-  font-weight: 600;
+  align-items: center;
+  gap: 8px;
+  color: #166534;
+  font-size: 0.78rem;
+  font-weight: 700;
+  position: relative;
+  z-index: 1;
+}
+
+.workflow-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.step-number {
+  width: 23px;
+  height: 23px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.7rem;
+}
+
+.step-connector {
+  width: 28px;
+  height: 1px;
+  background: #86efac;
 }
 
 /* Form */
@@ -2386,6 +2633,46 @@ input[type='time']::-webkit-outer-spin-button {
 @media (max-width: 768px) {
   .court-upload-page {
     gap: 16px;
+  }
+
+  .request-workflow-card {
+    padding: 18px 16px;
+    border-radius: 14px;
+  }
+
+  .workflow-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .workflow-status {
+    align-self: flex-start;
+  }
+
+  .request-mode-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .court-selection {
+    flex-basis: auto;
+  }
+
+  .request-mode-actions button {
+    width: 100%;
+  }
+
+  .workflow-steps {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .step-connector {
+    width: 1px;
+    height: 12px;
+    margin-left: 11px;
   }
 
   .page-header {

@@ -469,7 +469,15 @@ async def create_court_request(
 
     is_update_request = not request.is_new_court
     owner_courts = court_crud.get_courts_by_owner(db, current_user.id)
-    exclude_court_id = owner_courts[0].id if is_update_request and owner_courts else None
+    if is_update_request and request.court_id is not None:
+        if not any(court.id == request.court_id for court in owner_courts):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected court does not belong to the current owner",
+            )
+        exclude_court_id = request.court_id
+    else:
+        exclude_court_id = owner_courts[0].id if is_update_request and owner_courts else None
 
     if request.court_type == "social" and _social_name_conflicts(db, request.name, exclude_court_id):
         raise HTTPException(
@@ -575,7 +583,11 @@ async def update_court_request_status(
         owner_courts = court_crud.get_courts_by_owner(db, request.owner_id)
 
         if request.court_type == "social":
-            exclude_court_id = owner_courts[0].id if owner_courts and not request.is_new_court else None
+            exclude_court_id = (
+                request.court_id
+                if request.court_id is not None and not request.is_new_court
+                else (owner_courts[0].id if owner_courts and not request.is_new_court else None)
+            )
             if _social_name_conflicts(db, request.name, exclude_court_id, request.id):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -590,7 +602,15 @@ async def update_court_request_status(
                     detail="Cannot update a court because the owner has no approved court",
                 )
             # Update existing approved court after admin approval.
-            target_court = owner_courts[0]
+            target_court = next(
+                (court for court in owner_courts if court.id == request.court_id),
+                owner_courts[0] if request.court_id is None else None,
+            )
+            if target_court is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The selected court does not belong to the request owner",
+                )
             update_data = CourtUpdate(
                 name=request.name,
                 address=request.address,

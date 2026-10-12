@@ -78,6 +78,8 @@ const isLoading = ref(false)
 const currentImageIndex = ref(0)
 const activeTab = ref('overview')
 const socialSessions = ref<SocialSession[]>([])
+const socialSessionsLoading = ref(false)
+const socialSessionsError = ref(false)
 const socialToday = computed(() => socialSessions.value[0] || null)
 const socialDateLabel = computed(() => {
   if (!court.value?.social_date) return 'Date to be announced'
@@ -108,7 +110,9 @@ const fetchCourtDetails = async () => {
     const courtId = route.params.id
     const response = await axiosInstance.get(`/courts/${courtId}`)
     court.value = response.data
-    if (court.value?.court_type === 'social' && authStore.token) {
+    if (court.value?.court_type === 'social') {
+      socialSessionsLoading.value = true
+      socialSessionsError.value = false
       const date = court.value.social_date
         ? new Date(`${court.value.social_date}T00:00:00`)
         : new Date()
@@ -117,9 +121,14 @@ const fetchCourtDetails = async () => {
         params: { court_id: court.value.id, booking_date: bookingDate },
       })
       socialSessions.value = sessions.data
+      socialSessionsLoading.value = false
     }
   } catch (error) {
     console.error('Error fetching court details:', error)
+    if (court.value?.court_type === 'social') {
+      socialSessionsError.value = true
+      socialSessionsLoading.value = false
+    }
   } finally {
     isLoading.value = false
   }
@@ -349,9 +358,17 @@ onMounted(() => {
               <strong>{{ court.social_start_time }} - {{ court.social_end_time }}</strong>
             </div>
 
-            <div v-if="!socialToday" class="social-empty-state">
+            <div v-if="socialSessionsLoading" class="social-empty-state social-loading-state">
+              <strong>Checking players...</strong>
+              <span>Loading the latest ticket count for this social session.</span>
+            </div>
+            <div v-else-if="socialSessionsError" class="social-empty-state social-error-state">
+              <strong>Players are temporarily unavailable.</strong>
+              <span>You can still join this social session and check again shortly.</span>
+            </div>
+            <div v-else-if="!socialToday" class="social-empty-state">
               <strong>Be the first player in.</strong>
-              <span>Purchase one or more tickets to join today's social play.</span>
+              <span>Purchase one or more tickets to join this social play.</span>
             </div>
             <div v-else class="social-today-summary">
               <div class="session-progress-label">
@@ -1113,6 +1130,16 @@ onMounted(() => {
   padding: 28px;
   border: 1px dashed #52726a;
   color: #b5c8bd;
+}
+
+.social-loading-state {
+  border-style: solid;
+  background: #214540;
+}
+
+.social-error-state {
+  border-color: #fbbf24;
+  background: rgba(120, 53, 15, 0.2);
 }
 
 .social-session-list {
@@ -1935,9 +1962,51 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .social-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .social-hero-copy {
+    padding: 42px 22px 34px;
+  }
+
+  .social-hero h1 {
+    font-size: clamp(2.25rem, 12vw, 4rem);
+  }
+
   .social-hero-carousel,
   .social-hero-image {
     min-height: 280px;
+  }
+
+  .social-content {
+    padding: 38px 18px 64px;
+  }
+
+  .social-intro,
+  .social-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .social-primary-btn {
+    width: 100%;
+  }
+
+  .social-location-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    margin: 28px 0 34px;
+  }
+
+  .social-sessions-panel {
+    padding: 20px 16px;
+  }
+
+  .social-date-label {
+    align-self: flex-start;
   }
 
   .carousel-container {
@@ -1996,6 +2065,32 @@ onMounted(() => {
 }
 
 @media (max-width: 640px) {
+  .social-hero-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .social-hero-carousel,
+  .social-hero-image {
+    min-height: 230px;
+  }
+
+  .social-section-heading h2 {
+    font-size: 1.7rem;
+  }
+
+  .session-progress-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .person-chip {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
   .main-content {
     padding: 16px 12px;
   }

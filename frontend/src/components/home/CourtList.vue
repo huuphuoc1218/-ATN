@@ -364,6 +364,24 @@ onMounted(() => {
   color: #e5ff4f;
 }
 
+.social-home-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 20px;
+  color: #365314;
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.4;
+  opacity: 1;
+}
+
+.social-home-time i {
+  color: #4a7c2c;
+  font-size: 1rem;
+  opacity: 1;
+}
+
 .social-home-btn {
   background: #214540;
   color: #e5ff4f;
@@ -725,6 +743,15 @@ onMounted(() => {
     padding: 60px 20px;
   }
 
+  .social-home-section {
+    padding: 20px;
+    border-radius: 12px;
+  }
+
+  .social-home-heading h2 {
+    line-height: 1.1;
+  }
+
   .section-header {
     flex-direction: column;
     align-items: flex-start;
@@ -742,6 +769,14 @@ onMounted(() => {
 
   .court-card {
     padding: 16px;
+  }
+
+  .social-home-card {
+    padding: 0;
+  }
+
+  .social-home-card .court-info {
+    padding: 20px;
   }
 
   .court-image {
@@ -767,6 +802,14 @@ onMounted(() => {
 @media (max-width: 480px) {
   .court-list-section {
     padding: 40px 16px;
+  }
+
+  .social-home-section {
+    padding: 16px;
+  }
+
+  .social-home-card .court-info {
+    padding: 16px;
   }
 
   .section-title {

@@ -551,7 +551,6 @@ async def list_social_bookings(
     court_id: int,
     booking_date: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
     try:
         requested_date = datetime.strptime(booking_date, "%Y-%m-%d").date()

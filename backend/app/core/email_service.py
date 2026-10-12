@@ -1,9 +1,12 @@
 import smtplib
+import logging
 from email.message import EmailMessage
 from html import escape
 from typing import Tuple
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def is_email_configured() -> bool:
@@ -32,6 +35,11 @@ def send_booking_qr_email(
   ) -> Tuple[bool, str]:
     """Send booking confirmation email with QR code image to customer."""
     if not is_email_configured():
+        logger.error(
+            "SMTP is not configured; booking confirmation email was not sent. "
+            "Required variables: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, "
+            "SMTP_PASSWORD, SMTP_FROM_EMAIL."
+        )
         return False, "SMTP is not fully configured"
 
     subject = f"[NP SPORTCLUB] Payment confirmed for booking #{booking_id}"
@@ -124,4 +132,5 @@ def send_booking_qr_email(
                 server.send_message(msg)
         return True, "Email sent successfully"
     except Exception as exc:
+        logger.exception("Failed to send booking confirmation email to %s", to_email)
         return False, f"Email sending failed: {exc}"

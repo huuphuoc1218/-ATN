@@ -84,7 +84,14 @@ def get_courts_by_owner(db: Session, owner_id: int) -> List[Court]:
     return db.query(Court).filter(Court.owner_id == owner_id).all()
 
 
-def create_court(db: Session, court: CourtCreate, owner_id: int, images: Optional[List[str]] = None) -> Court:
+def create_court(
+    db: Session,
+    court: CourtCreate,
+    owner_id: int,
+    images: Optional[List[str]] = None,
+    *,
+    commit: bool = True,
+) -> Court:
     """Create a new court and auto-generate individual courts based on quantity"""
     # Convert time_slots to dict format for JSON storage
     time_slots_dict = [slot.model_dump() for slot in court.time_slots] if court.time_slots else []
@@ -112,7 +119,7 @@ def create_court(db: Session, court: CourtCreate, owner_id: int, images: Optiona
         time_slots=time_slots_dict,
     )
     db.add(db_court)
-    db.commit()
+    db.flush()
     db.refresh(db_court)
     
     # Auto-generate individual courts based on quantity
@@ -123,13 +130,22 @@ def create_court(db: Session, court: CourtCreate, owner_id: int, images: Optiona
         )
         db.add(individual_court)
     
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(db_court)
     
     return db_court
 
 
-def update_court(db: Session, court_id: int, court_update: CourtUpdate) -> Optional[Court]:
+def update_court(
+    db: Session,
+    court_id: int,
+    court_update: CourtUpdate,
+    *,
+    commit: bool = True,
+) -> Optional[Court]:
     """Update a court"""
     db_court = get_court(db, court_id)
     if not db_court:
@@ -175,7 +191,10 @@ def update_court(db: Session, court_id: int, court_update: CourtUpdate) -> Optio
                 if not court.bookings:
                     db.delete(court)
     
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(db_court)
     return db_court
 
@@ -686,5 +705,3 @@ def get_payment_info(db: Session, booking_id: int) -> Optional[dict]:
         "booking_id": booking.id,
         "expires_at": expires_at
     }
-
-

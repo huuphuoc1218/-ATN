@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { isAxiosError } from 'axios'
 import axiosInstance from '@/utils/axios'
 import { useAuthStore } from '@/stores/auth'
@@ -30,7 +31,14 @@ interface BookingInviteDetails {
   invitee_name: string | null
 }
 
+interface BookingInviteResponse {
+  booking_id: number
+  court_id?: number | null
+  requires_purchase: boolean
+}
+
 const authStore = useAuthStore()
+const router = useRouter()
 const toast = useToast()
 const notifications = ref<Notification[]>([])
 const unreadCount = ref(0)
@@ -171,9 +179,12 @@ const respondBookingInvite = async (notification: Notification, action: 'accept'
 
   try {
     processingBookingInviteId.value = notification.related_id
-    await axiosInstance.post(`/bookings/invite-codes/${notification.related_id}/respond`, {
-      action,
-    })
+    const response = await axiosInstance.post<BookingInviteResponse>(
+      `/bookings/invite-codes/${notification.related_id}/respond`,
+      {
+        action,
+      },
+    )
 
     if (!handledBookingInviteIds.value.includes(notification.related_id)) {
       handledBookingInviteIds.value = [...handledBookingInviteIds.value, notification.related_id]
@@ -194,7 +205,12 @@ const respondBookingInvite = async (notification: Notification, action: 'accept'
       }
     }
 
-    toast.success(action === 'accept' ? 'Booking invite accepted' : 'Booking invite rejected')
+    if (action === 'accept' && response.data.requires_purchase && response.data.court_id) {
+      toast.success('Invite accepted. Please buy a social ticket to join.')
+      await router.push(`/booking/${response.data.court_id}`)
+    } else {
+      toast.success(action === 'accept' ? 'Booking invite accepted' : 'Booking invite rejected')
+    }
   } catch (error: unknown) {
     const message = isAxiosError(error)
       ? error.response?.data?.detail || 'Unable to process booking invite'

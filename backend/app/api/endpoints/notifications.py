@@ -468,14 +468,15 @@ async def create_court_request(
         )
 
     is_update_request = not request.is_new_court
+    request_court_id = getattr(request, "court_id", None)
     owner_courts = court_crud.get_courts_by_owner(db, current_user.id)
-    if is_update_request and request.court_id is not None:
-        if not any(court.id == request.court_id for court in owner_courts):
+    if is_update_request and request_court_id is not None:
+        if not any(court.id == request_court_id for court in owner_courts):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="The selected court does not belong to the current owner",
             )
-        exclude_court_id = request.court_id
+        exclude_court_id = request_court_id
     else:
         exclude_court_id = owner_courts[0].id if is_update_request and owner_courts else None
 
@@ -565,9 +566,11 @@ async def update_court_request_status(
     if request.status != "pending":
         raise HTTPException(status_code=400, detail="Request already reviewed")
 
+    request_court_id = getattr(request, "court_id", None)
+
     # Update request status
     updated_request = notification_crud.update_court_request_status(
-        db, request_id, update, current_user.id
+        db, request_id, update, current_user.id, commit=False
     )
 
     # If approved, create a new court OR update existing owner court
@@ -584,8 +587,8 @@ async def update_court_request_status(
 
         if request.court_type == "social":
             exclude_court_id = (
-                request.court_id
-                if request.court_id is not None and not request.is_new_court
+                request_court_id
+                if request_court_id is not None and not request.is_new_court
                 else (owner_courts[0].id if owner_courts and not request.is_new_court else None)
             )
             if _social_name_conflicts(db, request.name, exclude_court_id, request.id):
@@ -603,8 +606,8 @@ async def update_court_request_status(
                 )
             # Update existing approved court after admin approval.
             target_court = next(
-                (court for court in owner_courts if court.id == request.court_id),
-                owner_courts[0] if request.court_id is None else None,
+                (court for court in owner_courts if court.id == request_court_id),
+                owner_courts[0] if request_court_id is None else None,
             )
             if target_court is None:
                 raise HTTPException(
@@ -632,7 +635,7 @@ async def update_court_request_status(
                 time_slots=time_slots,
                 images=images,
             )
-            court = court_crud.update_court(db, target_court.id, update_data)
+            court = court_crud.update_court(db, target_court.id, update_data, commit=False)
 
             notification = NotificationCreate(
                 user_id=request.owner_id,
@@ -663,7 +666,9 @@ async def update_court_request_status(
                 time_slots=time_slots,
             )
 
-            court = court_crud.create_court(db, court_data, request.owner_id, images)
+            court = court_crud.create_court(
+                db, court_data, request.owner_id, images, commit=False
+            )
 
             notification = NotificationCreate(
                 user_id=request.owner_id,
@@ -689,7 +694,9 @@ async def update_court_request_status(
             related_id=request_id,
         )
 
-    notification_crud.create_notification(db, notification)
+    notification_crud.create_notification(db, notification, commit=False)
+    db.commit()
+    db.refresh(updated_request)
 
     return _attach_court_request_metadata(db, updated_request)
 

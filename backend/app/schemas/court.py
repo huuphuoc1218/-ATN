@@ -323,6 +323,8 @@ class BookingInviteCodeActionResponse(BaseModel):
     status: str
     message: str
     responded_at: Optional[datetime] = None
+    court_id: Optional[int] = None
+    requires_purchase: bool = False
 
 
 class BookingInviteSendRequest(BaseModel):
@@ -350,6 +352,8 @@ class BookingInviteNotificationActionResponse(BaseModel):
     status: str
     message: str
     responded_at: Optional[datetime] = None
+    court_id: Optional[int] = None
+    requires_purchase: bool = False
 
 
 class BookingInviteDetailResponse(BaseModel):

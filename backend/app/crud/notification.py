@@ -68,6 +68,9 @@ def mark_all_as_read(db: Session, user_id: int):
 def create_court_request(db: Session, request: CourtRequestCreate, owner_id: int) -> CourtRequest:
     """Create a new court registration request"""
     request_data = request.model_dump()
+    # Older production model revisions do not expose court_id yet. The
+    # approval flow already treats a missing value as the owner's first court.
+    request_data.pop("court_id", None)
     db_request = CourtRequest(
         **request_data,
         owner_id=owner_id,
